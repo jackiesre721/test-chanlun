@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chanlan 缠论分析</title>
+  <link rel="icon" href="data:," />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #131722; color: #d1d4dc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .toolbar { height: 52px; display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #202431; border-bottom: 1px solid #363c4e; overflow-x: auto; }
+    .brand { font-weight: 950; color: #f1d28a; white-space: nowrap; letter-spacing: .04em; text-shadow: 0 0 20px rgba(241,210,138,.28); }
+    .brand span { color: #4f7dff; }
+    .group { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; background: #151923; border-radius: 8px; white-space: nowrap; }
+    label { font-size: 12px; color: rgba(232,236,246,.78); }
+    select, input, button { background: #2a2e39; color: #d1d4dc; border: 1px solid #3a4052; border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+    input { width: 116px; }
+    button { cursor: pointer; }
+    button.primary { background: #2962ff; border-color: #2962ff; color: #fff; font-weight: 800; }
+    .spacer { flex: 1 0 auto; }
+    .status { color: rgba(232,236,246,.72); font-size: 12px; white-space: nowrap; }
+    .status b { color: #19e6a6; }
+    .main { display: grid; grid-template-columns: 1fr 300px; height: calc(100vh - 52px); }
+    #chart { width: 100%; height: 100%; }
+    .sidebar { background: #202431; border-left: 1px solid #363c4e; overflow-y: auto; padding: 12px; }
+    .card { border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.035); border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
+    .title { font-weight: 900; margin-bottom: 8px; }
+    .muted { color: rgba(232,236,246,.62); font-size: 12px; line-height: 1.6; }
+    .signal { border-left: 3px solid; padding: 9px; background: #151923; border-radius: 8px; margin: 8px 0; }
+    .buy { border-left-color: #19e6a6; }
+    .sell { border-left-color: #7fb7ff; }
+    .signal-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 900; }
+    .signal p { margin-top: 6px; color: rgba(232,236,246,.68); font-size: 12px; line-height: 1.5; }
+    .pill { display: inline-flex; align-items: center; justify-content: center; min-width: 38px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 950; }
+    .pill.buy { color: #19e6a6; background: rgba(25,230,166,.1); border: 1px solid rgba(25,230,166,.18); }
+    .pill.sell { color: #7fb7ff; background: rgba(127,183,255,.1); border: 1px solid rgba(127,183,255,.18); }
+    .loading { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); background: #05070c; border: 1px solid #363c4e; border-radius: 10px; padding: 16px 20px; display: none; z-index: 10; }
+    .warn { color: #ffbf69; margin-top: 8px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="brand">Chanlan <span>缠论</span></div>
+    <div class="group">
+      <label for="symbol">品种</label>
+      <select id="symbol" aria-label="品种">
+        <option>BTCUSDT</option>
+        <option>ETHUSDT</option>
+      </select>
+    </div>
+    <div class="group">
+      <label for="interval">周期</label>
+      <select id="interval" aria-label="周期">
+        <option value="1" selected>1分钟（日）</option>
+        <option value="15">15分钟（周）</option>
+        <option value="30">30分钟（月）</option>
+      </select>
+    </div>
+    <div class="group">
+      <label><input type="checkbox" id="showBis" checked /> 本级笔</label>
+      <label><input type="checkbox" id="showActiveBi" checked /> 未完成笔</label>
+      <label><input type="checkbox" id="showSegments" checked /> 线段</label>
+      <label><input type="checkbox" id="showFractals" /> 分型</label>
+      <label><input type="checkbox" id="showSignals" checked /> 买卖点</label>
+      <label><input type="checkbox" id="showBisLv2" /> 中级别笔</label>
+      <label><input type="checkbox" id="showZhongshu" checked /> 中枢</label>
+      <label><input type="checkbox" id="showZhongshuLv2" /> 中级别中枢</label>
+    </div>
+    <button id="analyzeBtn" class="primary">分析</button>
+    <div class="spacer"></div>
+    <div class="status">严格结构：<b>无证据不出点</b></div>
+  </div>
+
+  <div class="main">
+    <div id="chart"></div>
+    <aside class="sidebar">
+      <div class="card">
+        <div class="title">说明</div>
+        <div class="muted">按“分型 → 笔 → 线段 → 中枢 → 背驰 → 买卖点”的顺序分析。结构不足、没有离开段背驰证据时，不输出买卖点。</div>
+        <div id="warning" class="warn"></div>
+      </div>
+      <div class="card">
+        <div class="title">结构状态</div>
+        <div id="structureStatus" class="muted">点击分析</div>
+      </div>
+      <div class="card">
+        <div class="title">买卖点信号</div>
+        <div id="signalList" class="muted">点击分析</div>
+      </div>
+    </aside>
+  </div>
+  <div id="loading" class="loading">分析中...</div>
+
+  <script>
+    const chart = echarts.init(document.getElementById("chart"));
+    let lastResult = null;
+
+    async function analyze() {
+      document.getElementById("loading").style.display = "block";
+      try {
+        const payload = {
+          market: "crypto",
+          symbol: document.getElementById("symbol").value,
+          interval: document.getElementById("interval").value,
+          limit: 1000
+        };
+        const res = await fetch("/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if (!result.success) throw new Error(result.error?.message || "分析失败");
+        lastResult = result;
+        render(result);
+      } catch (err) {
+        showChartError(err.message || "分析失败");
+        document.getElementById("structureStatus").innerHTML = `<span class="warn">${err.message}</span>`;
+        document.getElementById("signalList").innerHTML = `<span class="warn">暂无信号</span>`;
+      } finally {
+        document.getElementById("loading").style.display = "none";
+      }
+    }
+
+    function showChartError(message) {
+      chart.setOption({
+        backgroundColor: "#131722",
+        graphic: {
+          type: "text",
+          left: "center",
+          top: "middle",
+          style: {
+            text: `行情加载失败\n${message}\n请稍后重试，或切换周期/品种。`,
+            fill: "#d1d4dc",
+            fontSize: 16,
+            lineHeight: 28,
+            textAlign: "center"
+          }
+        }
+      }, true);
+    }
+
+    function render(result) {
+      const times = result.kline_data.map(k => k.time);
+      const candles = result.kline_data.map(k => [k.open, k.close, k.low, k.high]);
+      const macdBars = result.macd_data.map(m => m.hist);
+      const dif = result.macd_data.map(m => m.dif);
+      const dea = result.macd_data.map(m => m.dea);
+      const series = [
+        {
+          name: "K线",
+          type: "candlestick",
+          data: candles,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          itemStyle: { color: "#26a69a", color0: "#ef5350", borderColor: "#26a69a", borderColor0: "#ef5350" },
+          markLine: {
+            symbol: "none",
+            data: [{ yAxis: result.current_price, label: { formatter: result.current_price.toFixed(2) } }],
+            lineStyle: { color: "#f1d28a", type: "dashed" }
+          }
+        }
+      ];
+
+      if (document.getElementById("showBis").checked) series.push(strokeSeries("本级笔", result.bis, times.length, "#f1d28a", 2));
+      if (document.getElementById("showActiveBi").checked && result.active_bi) series.push(activeStrokeSeries("未完成笔", result.active_bi, times.length));
+      if (document.getElementById("showSegments").checked) series.push(strokeSeries("线段", result.segments, times.length, "#ffb74d", 3));
+      if (document.getElementById("showFractals").checked) series.push(...fractalSeries(result.fractals));
+      if (document.getElementById("showSignals").checked) {
+        series.push(signalSeries("买点", result.buy_signals, "#19e6a6", "triangle"));
+        series.push(signalSeries("卖点", result.sell_signals, "#7fb7ff", "pin"));
+      }
+      if (document.getElementById("showBisLv2").checked) series.push(strokeSeries("中级别笔", result.bis_lv2, times.length, "#4f7dff", 2));
+      if (document.getElementById("showZhongshu").checked) series.push(pivotSeries("中枢", result.zhongshus, "#b45cff"));
+      if (document.getElementById("showZhongshuLv2").checked) series.push(pivotSeries("中级别中枢", result.zhongshus_lv2, "#ff7ab6"));
+      series.push({
+        name: "MACD",
+        type: "bar",
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: macdBars,
+        itemStyle: { color: value => value.data >= 0 ? "rgba(38,166,154,.72)" : "rgba(239,83,80,.72)" }
+      });
+      series.push({ name: "DIF", type: "line", xAxisIndex: 1, yAxisIndex: 1, data: dif, symbol: "none", lineStyle: { color: "#b39ddb", width: 1 } });
+      series.push({ name: "DEA", type: "line", xAxisIndex: 1, yAxisIndex: 1, data: dea, symbol: "none", lineStyle: { color: "#ff8a80", width: 1 } });
+
+      chart.setOption({
+        backgroundColor: "#131722",
+        animation: false,
+        tooltip: { trigger: "axis" },
+        legend: { top: 8, textStyle: { color: "#d1d4dc" } },
+        axisPointer: { link: [{ xAxisIndex: [0, 1] }] },
+        grid: [
+          { left: 50, right: 70, top: 48, height: "70%" },
+          { left: 50, right: 70, top: "82%", height: "12%" }
+        ],
+        dataZoom: [
+          { type: "inside", xAxisIndex: [0, 1], start: 64, end: 100, filterMode: "none" },
+          { type: "slider", xAxisIndex: [0, 1], start: 64, end: 100, bottom: 8, height: 18, filterMode: "none" }
+        ],
+        xAxis: [
+          { type: "category", data: times, axisLine: { lineStyle: { color: "#363c4e" } }, axisLabel: { color: "rgba(209,212,220,.55)" } },
+          { type: "category", data: times, gridIndex: 1, axisLine: { lineStyle: { color: "#363c4e" } }, axisLabel: { color: "rgba(209,212,220,.45)" } }
+        ],
+        yAxis: [
+          { scale: true, position: "right", splitLine: { lineStyle: { color: "#262b38" } }, axisLabel: { color: "rgba(209,212,220,.7)" } },
+          { scale: true, position: "right", gridIndex: 1, splitLine: { lineStyle: { color: "#262b38" } }, axisLabel: { color: "rgba(209,212,220,.48)" } }
+        ],
+        series
+      }, true);
+      updateVisiblePriceScale();
+
+      document.getElementById("warning").textContent = result.warning || "";
+      document.querySelector(".card .muted").textContent =
+        `数据来自 ${result.data_source}；规则版本 ${result.rules_version}。当前只展示缠论结构链路：分型、笔、线段、中枢、背驰和买卖点依据。`;
+      renderStructureStatus(result);
+      renderSignals(result);
+    }
+
+    function strokeSeries(name, strokes, len, color, width) {
+      const data = Array(len).fill(null);
+      for (const stroke of strokes) {
+        data[stroke.start_idx] = stroke.start_price;
+        data[stroke.end_idx] = stroke.end_price;
+      }
+      return { name, type: "line", xAxisIndex: 0, yAxisIndex: 0, data, connectNulls: true, symbol: "circle", symbolSize: 6, lineStyle: { color, width }, itemStyle: { color } };
+    }
+
+    function activeStrokeSeries(name, stroke, len) {
+      const data = Array(len).fill(null);
+      data[stroke.start_idx] = stroke.start_price;
+      data[stroke.end_idx] = stroke.end_price;
+      return {
+        name,
+        type: "line",
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data,
+        connectNulls: true,
+        symbol: "circle",
+        symbolSize: 6,
+        lineStyle: { color: "#f1d28a", width: 2, type: "dashed" },
+        itemStyle: { color: "#f1d28a" }
+      };
+    }
+
+    function fractalSeries(fractals) {
+      const tops = fractals.filter(f => f.type === "TOP").map(f => [f.idx, f.price]);
+      const bottoms = fractals.filter(f => f.type === "BOTTOM").map(f => [f.idx, f.price]);
+      return [
+        {
+          name: "顶分型",
+          type: "scatter",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          symbol: "triangle",
+          symbolSize: 9,
+          symbolRotate: 180,
+          itemStyle: { color: "#7fb7ff" },
+          data: tops
+        },
+        {
+          name: "底分型",
+          type: "scatter",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          symbol: "triangle",
+          symbolSize: 9,
+          itemStyle: { color: "#19e6a6" },
+          data: bottoms
+        }
+      ];
+    }
+
+    function pivotSeries(name, pivots, color) {
+      return {
+        name,
+        type: "line",
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: [],
+        markArea: {
+          silent: true,
+          itemStyle: { color, opacity: 0.16 },
+          data: pivots.map(p => [{ xAxis: p.start_idx, yAxis: p.zd }, { xAxis: p.end_idx, yAxis: p.zg }])
+        }
+      };
+    }
+
+    function signalSeries(name, signals, color, symbol) {
+      return {
+        name,
+        type: "scatter",
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        symbol,
+        symbolSize: 16,
+        itemStyle: { color },
+        data: signals.map(s => [s.idx, s.price])
+      };
+    }
+
+    function updateVisiblePriceScale() {
+      if (!lastResult || !lastResult.kline_data.length) return;
+      const range = currentVisibleRange(lastResult.kline_data.length);
+      const visibleCandles = lastResult.kline_data.slice(range.startIdx, range.endIdx + 1);
+      if (!visibleCandles.length) return;
+
+      const minLow = Math.min(...visibleCandles.map(k => k.low));
+      const maxHigh = Math.max(...visibleCandles.map(k => k.high));
+      const padding = Math.max((maxHigh - minLow) * 0.08, maxHigh * 0.001);
+      chart.setOption({
+        yAxis: [
+          {
+            min: minLow - padding,
+            max: maxHigh + padding
+          },
+          {}
+        ]
+      });
+    }
+
+    function currentVisibleRange(length) {
+      const dataZoom = chart.getOption().dataZoom?.[0] || {};
+      const start = Number(dataZoom.start ?? 64);
+      const end = Number(dataZoom.end ?? 100);
+      return {
+        startIdx: Math.max(0, Math.floor((start / 100) * (length - 1))),
+        endIdx: Math.min(length - 1, Math.ceil((end / 100) * (length - 1)))
+      };
+    }
+
+    function renderStructureStatus(result) {
+      const el = document.getElementById("structureStatus");
+      const lastBi = result.bis[result.bis.length - 1];
+      const active = result.active_bi;
+      const directionLabel = dir => dir === "UP" ? "上升" : "下降";
+      el.innerHTML = `
+        <div>确认笔数量：<b>${result.bis.length}</b></div>
+        <div>本级分型数量：<b>${result.fractals.length}</b></div>
+        <div>线段数量：<b>${result.segments.length}</b></div>
+        <div>正式中枢数量：<b>${result.zhongshus.length}</b></div>
+        <div>背驰候选：<b>${result.divergences.length}</b></div>
+        ${lastBi ? `<div style="margin-top:8px;">最后确认笔：${directionLabel(lastBi.direction)}，${Number(lastBi.start_price).toFixed(2)} → ${Number(lastBi.end_price).toFixed(2)}</div>` : ""}
+        ${active ? `<div style="margin-top:8px;color:#f1d28a;">当前未完成笔：${directionLabel(active.direction)}，${Number(active.start_price).toFixed(2)} → ${Number(active.end_price).toFixed(2)}</div>` : `<div style="margin-top:8px;">暂无未完成笔。</div>`}
+        <div style="margin-top:8px;color:rgba(232,236,246,.56);">没有 5 段中枢、离开段和背驰依据时，系统不会强行输出买卖点。</div>
+      `;
+    }
+
+    function renderSignals(result) {
+      const signals = [...result.buy_signals, ...result.sell_signals].sort((a, b) => b.idx - a.idx);
+      const el = document.getElementById("signalList");
+      if (!signals.length) {
+        el.innerHTML = `<div class="muted">当前结构不足，暂无有效买卖点。需要先形成 5 段中枢，并出现带背驰依据的离开段。</div>`;
+        return;
+      }
+      const kindName = { first: "一类", second: "二类", third: "三类", td9: "TD9" };
+      el.innerHTML = signals.map(signal => `
+        <div class="signal ${signal.side === "BUY" ? "buy" : "sell"}">
+          <div class="signal-head">
+            <span><span class="pill ${signal.side === "BUY" ? "buy" : "sell"}">${signal.side === "BUY" ? "BUY" : "SELL"}</span> ${kindName[signal.kind] || signal.kind}${signal.side === "BUY" ? "买点" : "卖点"}</span>
+            <span>${Number(signal.price).toFixed(2)}</span>
+          </div>
+          <p>${signal.time}｜${signal.description}</p>
+          ${signal.evidence ? `<p>依据：${signal.evidence}</p>` : ""}
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("analyzeBtn").addEventListener("click", analyze);
+    document.getElementById("symbol").addEventListener("change", analyze);
+    document.getElementById("interval").addEventListener("change", analyze);
+    chart.on("dataZoom", updateVisiblePriceScale);
+    ["showBis", "showActiveBi", "showSegments", "showFractals", "showSignals", "showBisLv2", "showZhongshu", "showZhongshuLv2"].forEach(id => {
+      document.getElementById(id).addEventListener("change", () => { if (lastResult) render(lastResult); });
+    });
+    window.addEventListener("resize", () => chart.resize());
+
+    analyze();
+  </script>
+</body>
+</html>

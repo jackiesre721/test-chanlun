@@ -75,12 +75,14 @@ class Pivot(BaseModel):
     end_idx: int
     zg: float
     zd: float
+    level: Literal["bi", "segment"] = "segment"
     entry_seg_idx: Optional[int] = None
     leave_seg_idx: Optional[int] = None
     direction: Optional[Direction] = None
 
 
 class Divergence(BaseModel):
+    level: Literal["bi", "segment"] = "segment"
     direction: Direction
     pivot_idx: int
     entry_seg_idx: int
@@ -107,6 +109,7 @@ class Signal(BaseModel):
     price: float
     description: str
     strength: float = Field(ge=0)
+    pivot_level: Optional[Literal["bi", "segment"]] = None
     pivot_idx: Optional[int] = None
     entry_seg_idx: Optional[int] = None
     leave_seg_idx: Optional[int] = None
@@ -118,6 +121,56 @@ class TdSummary(BaseModel):
     setup_up: int
     setup_down: int
     last_signal: Optional[Signal] = None
+
+
+class ActionFocusPivotRef(BaseModel):
+    """用于「当下关注点」的中枢引用（来自本级或映射后的上级中枢）。"""
+
+    level: Literal["bi", "segment"]
+    zd: float
+    zg: float
+    start_idx: int = Field(ge=0)
+    end_idx: int = Field(ge=0)
+
+
+class ActionFocusPivotSlot(BaseModel):
+    """价格相对某一参考中枢的位置。"""
+
+    relation: Literal["inside", "above", "below", "none"]
+    pivot: Optional[ActionFocusPivotRef] = None
+
+
+class ActionFocusActiveBi(BaseModel):
+    direction: Direction
+    start_price: float
+    end_price: float
+
+
+class ActionFocusRecentDivergence(BaseModel):
+    level: Literal["bi", "segment"]
+    direction: Direction
+    idx: int = Field(ge=0)
+    ratio: float
+
+
+class ActionFocusRecentSignal(BaseModel):
+    side: SignalSide
+    kind: Literal["first", "second", "third", "td9"]
+    idx: int = Field(ge=0)
+    time: str
+
+
+class ActionFocus(BaseModel):
+    """当前 K 线末端的结构与证据语境（非交易建议）。"""
+
+    last_bar_index: int = Field(ge=0)
+    recent_window_bars: int = Field(ge=1)
+    current_price: float
+    primary_pivot: ActionFocusPivotSlot
+    higher_pivot: ActionFocusPivotSlot
+    active_bi: Optional[ActionFocusActiveBi] = None
+    recent_divergence: Optional[ActionFocusRecentDivergence] = None
+    recent_signal: Optional[ActionFocusRecentSignal] = None
 
 
 class AnalyzeRequest(BaseModel):
@@ -168,6 +221,7 @@ class AnalyzeResponse(BaseModel):
     buy_signals: list[Signal]
     sell_signals: list[Signal]
     td_summary: TdSummary
+    action_focus: ActionFocus
     warning: Optional[str] = None
 
 

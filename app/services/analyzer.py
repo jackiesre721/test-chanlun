@@ -9,13 +9,15 @@ from app.services.chan_engine import (
     build_segment_pivots,
     build_segments,
     build_signals,
+    build_pivots,
     build_strokes,
     find_fractals,
     normalize_candles,
 )
+from app.services.action_focus import build_action_focus
 from app.services.indicators import td_sequential, macd
 
-RULES_VERSION = "strict-chan-v2"
+RULES_VERSION = "strict-chan-v5"
 
 HIGHER_INTERVAL = {
     "1": "15",
@@ -40,11 +42,32 @@ class AnalyzerService:
         strokes = build_strokes(fractals, candles=normalized)
         active_stroke = build_active_stroke(normalized, strokes)
         segments = build_segments(strokes)
-        pivots = build_segment_pivots(segments)
+        bi_pivots = build_pivots(strokes)
+        segment_pivots = build_segment_pivots(segments)
+        pivots = bi_pivots + segment_pivots
         higher_strokes, higher_pivots = await self._analyze_higher_level(request, candles)
         display_macd = macd(candles)
-        divergences = build_divergences(segments, pivots, display_macd)
-        buy_signals, sell_signals = build_signals(candles, segments, pivots, divergences)
+        bi_divergences = build_divergences(strokes, bi_pivots, display_macd)
+        segment_divergences = build_divergences(segments, segment_pivots, display_macd)
+        divergences = bi_divergences + segment_divergences
+        bi_buy_signals, bi_sell_signals = build_signals(candles, strokes, bi_pivots, bi_divergences)
+        segment_buy_signals, segment_sell_signals = build_signals(candles, segments, segment_pivots, segment_divergences)
+        all_buy = sorted(bi_buy_signals + segment_buy_signals, key=lambda s: s.idx)
+        all_sell = sorted(bi_sell_signals + segment_sell_signals, key=lambda s: s.idx)
+        buy_signals = all_buy[-12:]
+        sell_signals = all_sell[-12:]
+        last_i = len(candles) - 1
+        action_focus = build_action_focus(
+            current_price=candles[-1].close,
+            last_bar_index=last_i,
+            kline_count=len(candles),
+            zhongshus=pivots,
+            zhongshus_lv2=higher_pivots,
+            active_bi=active_stroke,
+            divergences=divergences,
+            buy_signals=all_buy,
+            sell_signals=all_sell,
+        )
         td = td_sequential(candles)
 
         return AnalyzeResponse(
@@ -67,6 +90,7 @@ class AnalyzerService:
             buy_signals=buy_signals,
             sell_signals=sell_signals,
             td_summary=td,
+            action_focus=action_focus,
             warning=_warning_for(request.market, len(candles), len(strokes)),
         )
 
@@ -91,7 +115,7 @@ class AnalyzerService:
         higher_normalized = normalize_candles(higher_candles)
         higher_strokes = build_strokes(find_fractals(higher_normalized), candles=higher_normalized)
         higher_segments = build_segments(higher_strokes)
-        higher_pivots = build_segment_pivots(higher_segments)
+        higher_pivots = build_pivots(higher_strokes) + build_segment_pivots(higher_segments)
         return (
             [_map_stroke_to_base(stroke, higher_candles, base_candles) for stroke in higher_strokes],
             [_map_pivot_to_base(pivot, higher_candles, base_candles) for pivot in higher_pivots],

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 from app.core.models import (
     Candle,
@@ -13,7 +13,11 @@ from app.core.models import (
     Stroke,
     MacdPoint,
 )
+from app.core.config import settings
 from app.services.indicators import macd_area
+
+
+Movement = Union[Stroke, Segment]
 
 
 def normalize_candles(candles: list[Candle]) -> list[Candle]:
@@ -191,19 +195,27 @@ def build_pivots(strokes: list[Stroke]) -> list[Pivot]:
                     end_idx=strokes[i + 2].end_idx,
                     zg=zg,
                     zd=zd,
+                    level="bi",
+                    entry_seg_idx=i - 1 if i > 0 else None,
+                    leave_seg_idx=i + 3 if i + 3 < len(strokes) else None,
+                    direction=strokes[i + 3].direction if i + 3 < len(strokes) else None,
                 )
             )
-            i += 3
+            # Once a 3-stroke overlap pivot is formed, moving by 1 creates
+            # many near-identical pivots sharing 2/3 strokes. We still rely on
+            # _dedupe_pivots as a safety net, but reduce duplicates at source.
+            # Special-case the first window: allowing i=1 keeps an "entry" move
+            # available for divergence comparison (entry_idx = start_bi - 1).
+            i += 1 if i == 0 else 3
         else:
             i += 1
-    return pivots
+    return _dedupe_pivots(pivots)
 
 
 def build_segment_pivots(segments: list[Segment]) -> list[Pivot]:
     pivots: list[Pivot] = []
     i = 0
     while i <= len(segments) - 5:
-        entry = segments[i]
         core = segments[i + 1 : i + 4]
         overlap = _range_overlap(core)
         if overlap is None:
@@ -214,19 +226,12 @@ def build_segment_pivots(segments: list[Segment]) -> list[Pivot]:
         core_end = i + 3
         leaving_idx = core_end + 1
         while leaving_idx < len(segments) and _segment_overlaps_range(segments[leaving_idx], zd, zg):
-            next_overlap = _range_overlap([_range_proxy(zd, zg), segments[leaving_idx]])
-            if next_overlap is None:
-                break
-            zd, zg = next_overlap
             core_end = leaving_idx
             leaving_idx += 1
 
         if leaving_idx >= len(segments):
             break
         leaving = segments[leaving_idx]
-        if entry.direction != leaving.direction or not _leaves_pivot_range(leaving, zd, zg):
-            i += 1
-            continue
 
         pivots.append(
             Pivot(
@@ -236,16 +241,21 @@ def build_segment_pivots(segments: list[Segment]) -> list[Pivot]:
                 end_idx=segments[core_end].end_idx,
                 zg=zg,
                 zd=zd,
+                level="segment",
                 entry_seg_idx=i,
                 leave_seg_idx=leaving_idx,
                 direction=leaving.direction,
             )
         )
         i = leaving_idx
-    return pivots
+    return _dedupe_pivots(pivots)
 
 
-def build_active_stroke(candles: list[Candle], strokes: list[Stroke]) -> Optional[Stroke]:
+def build_active_stroke(
+    candles: list[Candle],
+    strokes: list[Stroke],
+    min_move_ratio: float = 0.2,
+) -> Optional[Stroke]:
     """Build the unconfirmed stroke from normalized candles after the last confirmed endpoint."""
     if not candles or not strokes:
         return None
@@ -274,6 +284,11 @@ def build_active_stroke(candles: list[Candle], strokes: list[Stroke]) -> Optiona
         if end_norm_idx == start_norm_idx or end_idx is None or end_price >= last.end_price:
             return None
 
+    previous_length = abs(last.end_price - last.start_price)
+    active_length = abs(end_price - last.end_price)
+    if previous_length > 0 and active_length < previous_length * min_move_ratio:
+        return None
+
     return Stroke(
         start_idx=last.end_idx,
         end_idx=end_idx,
@@ -286,36 +301,40 @@ def build_active_stroke(candles: list[Candle], strokes: list[Stroke]) -> Optiona
 
 
 def build_divergences(
-    segments: list[Segment],
+    movements: list[Movement],
     pivots: list[Pivot],
     macd_points: list[MacdPoint],
+    max_area_ratio: Optional[float] = None,
+    min_breakout_ratio: Optional[float] = None,
 ) -> list[Divergence]:
     divergences: list[Divergence] = []
+    area_ratio_limit = max_area_ratio if max_area_ratio is not None else settings.divergence_ratio
+    breakout_ratio = min_breakout_ratio if min_breakout_ratio is not None else settings.divergence_min_breakout_ratio
     for pivot_idx, pivot in enumerate(pivots):
-        leaving_idx = pivot.leave_seg_idx if pivot.leave_seg_idx is not None else _first_leaving_segment_index(segments, pivot)
+        # Entry and leaving are same-direction comparison moves; divergence compares their momentum.
+        leaving_idx = pivot.leave_seg_idx if pivot.leave_seg_idx is not None else _first_leaving_segment_index(movements, pivot)
         entry_idx = pivot.entry_seg_idx if pivot.entry_seg_idx is not None else pivot.start_bi - 1
-        if leaving_idx is None or entry_idx < 0 or leaving_idx >= len(segments) or entry_idx >= len(segments):
+        if leaving_idx is None or entry_idx < 0 or leaving_idx >= len(movements) or entry_idx >= len(movements):
             continue
 
-        leaving = segments[leaving_idx]
-        entry = segments[entry_idx]
+        leaving = movements[leaving_idx]
+        entry = movements[entry_idx]
         if entry.direction != leaving.direction or not _leaves_pivot_range(leaving, pivot.zd, pivot.zg):
             continue
 
-        entry_area = segment_macd_area(macd_points, entry)
-        leave_area = segment_macd_area(macd_points, leaving)
+        entry_area = movement_macd_area(macd_points, entry)
+        leave_area = movement_macd_area(macd_points, leaving)
         if entry_area <= 0:
             continue
         ratio = leave_area / entry_area
-        if ratio >= 0.8:
+        if ratio >= area_ratio_limit:
             continue
-        if leaving.direction == Direction.DOWN and leaving.end_price >= entry.end_price:
-            continue
-        if leaving.direction == Direction.UP and leaving.end_price <= entry.end_price:
+        if not _has_sufficient_breakout(entry, leaving, pivot, breakout_ratio):
             continue
 
         divergences.append(
             Divergence(
+                level=pivot.level,
                 direction=leaving.direction,
                 pivot_idx=pivot_idx,
                 entry_seg_idx=entry_idx,
@@ -333,7 +352,7 @@ def build_divergences(
 
 def build_signals(
     candles: list[Candle],
-    segments: list[Segment],
+    movements: list[Movement],
     pivots: list[Pivot],
     divergences: list[Divergence],
 ) -> tuple[list[Signal], list[Signal]]:
@@ -346,9 +365,10 @@ def build_signals(
             continue
         pivot = pivots[divergence.pivot_idx]
         strength = _safe_strength(divergence.entry_area, divergence.leave_area)
+        level_label = "笔中枢" if divergence.level == "bi" else "线段中枢"
         evidence = (
-            f"中枢#{divergence.pivot_idx}，进入段#{divergence.entry_seg_idx}，"
-            f"离开段#{divergence.leave_seg_idx}，MACD面积比={divergence.ratio:.2f}"
+            f"{level_label}#{divergence.pivot_idx}，进入#{divergence.entry_seg_idx}，"
+            f"离开#{divergence.leave_seg_idx}，MACD面积比={divergence.ratio:.2f}"
         )
 
         if divergence.direction == Direction.DOWN:
@@ -360,6 +380,7 @@ def build_signals(
                 price=divergence.price,
                 description=f"一买候选：向下离开中枢后价格新低，{divergence.description}，出现底背驰",
                 strength=strength,
+                pivot_level=divergence.level,
                 pivot_idx=divergence.pivot_idx,
                 entry_seg_idx=divergence.entry_seg_idx,
                 leave_seg_idx=divergence.leave_seg_idx,
@@ -377,6 +398,7 @@ def build_signals(
                 price=divergence.price,
                 description=f"一卖候选：向上离开中枢后价格新高，{divergence.description}，出现顶背驰",
                 strength=strength,
+                pivot_level=divergence.level,
                 pivot_idx=divergence.pivot_idx,
                 entry_seg_idx=divergence.entry_seg_idx,
                 leave_seg_idx=divergence.leave_seg_idx,
@@ -387,18 +409,36 @@ def build_signals(
             first_signal_segments.append((signal, divergence.leave_seg_idx, pivot))
 
     for first_signal, segment_idx, pivot in first_signal_segments:
-        second = _second_signal(candles, segments, first_signal, segment_idx)
+        second = _second_signal(candles, movements, first_signal, segment_idx)
         if second is not None:
             (buy_signals if second.side == SignalSide.BUY else sell_signals).append(second)
-        third = _third_signal(candles, segments, first_signal, segment_idx, pivot)
+        third = _third_signal(candles, movements, first_signal, segment_idx, pivot)
         if third is not None:
             (buy_signals if third.side == SignalSide.BUY else sell_signals).append(third)
 
-    return buy_signals[-12:], sell_signals[-12:]
+    return _latest_signal_per_pivot_side(buy_signals)[-12:], _latest_signal_per_pivot_side(sell_signals)[-12:]
 
 
 def segment_macd_area(points: list[MacdPoint], segment: Segment) -> float:
-    return macd_area(points, segment.start_idx, segment.end_idx)
+    return movement_macd_area(points, segment)
+
+
+def _latest_signal_per_pivot_side(signals: list[Signal]) -> list[Signal]:
+    latest: dict[tuple[Optional[str], Optional[int], SignalSide], Signal] = {}
+    passthrough: list[Signal] = []
+    for signal in signals:
+        if signal.pivot_idx is None:
+            passthrough.append(signal)
+            continue
+        key = (signal.pivot_level, signal.pivot_idx, signal.side)
+        current = latest.get(key)
+        if current is None or signal.idx >= current.idx:
+            latest[key] = signal
+    return sorted(passthrough + list(latest.values()), key=lambda signal: signal.idx)
+
+
+def movement_macd_area(points: list[MacdPoint], movement: Movement) -> float:
+    return macd_area(points, movement.start_idx, movement.end_idx)
 
 
 def _segment_from_strokes(strokes: list[Stroke], start_bi: int, end_bi: int) -> Segment:
@@ -441,7 +481,7 @@ def _extend_segment(segment: Segment, stroke: Stroke, stroke_idx: int) -> Segmen
     )
 
 
-def _range_overlap(items: list[Segment]) -> Optional[tuple[float, float]]:
+def _range_overlap(items: list[Movement]) -> Optional[tuple[float, float]]:
     if not items:
         return None
     lows = [min(item.start_price, item.end_price) for item in items]
@@ -453,16 +493,81 @@ def _range_overlap(items: list[Segment]) -> Optional[tuple[float, float]]:
     return None
 
 
-def _segment_overlaps_range(segment: Segment, zd: float, zg: float) -> bool:
+def _dedupe_pivots(pivots: list[Pivot]) -> list[Pivot]:
+    deduped: list[Pivot] = []
+    for pivot in pivots:
+        duplicate_idx = next(
+            (idx for idx, existing in enumerate(deduped) if _is_duplicate_pivot(existing, pivot)),
+            None,
+        )
+        if duplicate_idx is None:
+            deduped.append(pivot)
+            continue
+        deduped[duplicate_idx] = _merge_pivots(deduped[duplicate_idx], pivot)
+    return deduped
+
+
+def _is_duplicate_pivot(left: Pivot, right: Pivot) -> bool:
+    if left.level != right.level:
+        return False
+    if not _pivot_time_windows_overlap(left, right):
+        return False
+    left_width = max(left.zg - left.zd, 1e-8)
+    right_width = max(right.zg - right.zd, 1e-8)
+    overlap = min(left.zg, right.zg) - max(left.zd, right.zd)
+    return overlap > 0 and overlap / min(left_width, right_width) >= settings.pivot_dedupe_overlap_ratio
+
+
+def _pivot_time_windows_overlap(left: Pivot, right: Pivot) -> bool:
+    return max(left.start_idx, right.start_idx) <= min(left.end_idx, right.end_idx)
+
+
+def _merge_pivots(left: Pivot, right: Pivot) -> Pivot:
+    # Keep the first formation window for rendering. Extending the visual box across
+    # every duplicate discovery turns one pivot into a long background band.
+    entry_seg_idx = left.entry_seg_idx if left.entry_seg_idx is not None else right.entry_seg_idx
+    took_entry_from_right = left.entry_seg_idx is None and right.entry_seg_idx is not None
+    return left.model_copy(
+        update={
+            "start_bi": left.start_bi,
+            "end_bi": left.end_bi,
+            "start_idx": left.start_idx,
+            "end_idx": left.end_idx,
+            "entry_seg_idx": entry_seg_idx,
+            # If we had to take the entry from the right pivot (e.g. start_bi=0 pivot),
+            # prefer the matching leaving context from the same pivot for divergence/signals.
+            "leave_seg_idx": (
+                right.leave_seg_idx
+                if took_entry_from_right and right.leave_seg_idx is not None
+                else (left.leave_seg_idx if left.leave_seg_idx is not None else right.leave_seg_idx)
+            ),
+            "direction": (
+                right.direction
+                if took_entry_from_right and right.direction is not None
+                else (left.direction if left.direction is not None else right.direction)
+            ),
+        }
+    )
+
+
+def _segment_overlaps_range(segment: Movement, zd: float, zg: float) -> bool:
     low = min(segment.start_price, segment.end_price)
     high = max(segment.start_price, segment.end_price)
     return max(low, zd) < min(high, zg)
 
 
-def _leaves_pivot_range(segment: Segment, zd: float, zg: float) -> bool:
+def _leaves_pivot_range(segment: Movement, zd: float, zg: float) -> bool:
     if segment.direction == Direction.UP:
         return segment.end_price > zg
     return segment.end_price < zd
+
+
+def _has_sufficient_breakout(entry: Movement, leaving: Movement, pivot: Pivot, min_ratio: float) -> bool:
+    pivot_height = max(pivot.zg - pivot.zd, 1e-8)
+    required = pivot_height * min_ratio
+    if leaving.direction == Direction.UP:
+        return leaving.end_price > entry.end_price and leaving.end_price - max(entry.end_price, pivot.zg) >= required
+    return leaving.end_price < entry.end_price and min(entry.end_price, pivot.zd) - leaving.end_price >= required
 
 
 def _range_proxy(zd: float, zg: float) -> Segment:
@@ -477,7 +582,7 @@ def _range_proxy(zd: float, zg: float) -> Segment:
     )
 
 
-def _first_leaving_segment_index(segments: list[Segment], pivot: Pivot) -> Optional[int]:
+def _first_leaving_segment_index(segments: list[Movement], pivot: Pivot) -> Optional[int]:
     for idx in range(pivot.end_bi + 1, len(segments)):
         segment = segments[idx]
         if segment.direction == Direction.UP and segment.end_price > pivot.zg:
@@ -489,7 +594,7 @@ def _first_leaving_segment_index(segments: list[Segment], pivot: Pivot) -> Optio
 
 def _second_signal(
     candles: list[Candle],
-    segments: list[Segment],
+    segments: list[Movement],
     first_signal: Signal,
     segment_idx: int,
 ) -> Optional[Signal]:
@@ -512,6 +617,12 @@ def _second_signal(
             price=confirm.end_price,
             description="二买：一买后回试不破前低，保留底背驰后的低点结构",
             strength=0.7,
+            pivot_level=first_signal.pivot_level,
+            pivot_idx=first_signal.pivot_idx,
+            entry_seg_idx=first_signal.entry_seg_idx,
+            leave_seg_idx=first_signal.leave_seg_idx,
+            macd_ratio=first_signal.macd_ratio,
+            evidence=f"基于一类买点：{first_signal.evidence}" if first_signal.evidence else None,
         )
 
     if retrace.direction != Direction.DOWN or confirm.direction != Direction.UP:
@@ -526,12 +637,18 @@ def _second_signal(
         price=confirm.end_price,
         description="二卖：一卖后反抽不破前高，保留顶背驰后的高点结构",
         strength=0.7,
+        pivot_level=first_signal.pivot_level,
+        pivot_idx=first_signal.pivot_idx,
+        entry_seg_idx=first_signal.entry_seg_idx,
+        leave_seg_idx=first_signal.leave_seg_idx,
+        macd_ratio=first_signal.macd_ratio,
+        evidence=f"基于一类卖点：{first_signal.evidence}" if first_signal.evidence else None,
     )
 
 
 def _third_signal(
     candles: list[Candle],
-    segments: list[Segment],
+    segments: list[Movement],
     first_signal: Signal,
     segment_idx: int,
     pivot: Pivot,
@@ -555,6 +672,12 @@ def _third_signal(
             price=confirm.end_price,
             description="三买：向上离开中枢后回踩不回中枢，并再次上行确认",
             strength=0.8,
+            pivot_level=first_signal.pivot_level,
+            pivot_idx=first_signal.pivot_idx,
+            entry_seg_idx=first_signal.entry_seg_idx,
+            leave_seg_idx=first_signal.leave_seg_idx,
+            macd_ratio=first_signal.macd_ratio,
+            evidence=f"基于一类卖点后的离开回踩：{first_signal.evidence}" if first_signal.evidence else None,
         )
 
     if retrace.direction != Direction.UP or confirm.direction != Direction.DOWN:
@@ -569,6 +692,12 @@ def _third_signal(
         price=confirm.end_price,
         description="三卖：向下离开中枢后反抽不回中枢，并再次下行确认",
         strength=0.8,
+        pivot_level=first_signal.pivot_level,
+        pivot_idx=first_signal.pivot_idx,
+        entry_seg_idx=first_signal.entry_seg_idx,
+        leave_seg_idx=first_signal.leave_seg_idx,
+        macd_ratio=first_signal.macd_ratio,
+        evidence=f"基于一类买点后的离开反抽：{first_signal.evidence}" if first_signal.evidence else None,
     )
 
 
@@ -580,6 +709,7 @@ def _signal(
     price: float,
     description: str,
     strength: float,
+    pivot_level: Optional[str] = None,
     pivot_idx: Optional[int] = None,
     entry_seg_idx: Optional[int] = None,
     leave_seg_idx: Optional[int] = None,
@@ -595,6 +725,7 @@ def _signal(
         price=price,
         description=description,
         strength=strength,
+        pivot_level=pivot_level,
         pivot_idx=pivot_idx,
         entry_seg_idx=entry_seg_idx,
         leave_seg_idx=leave_seg_idx,

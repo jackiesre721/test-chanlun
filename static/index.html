@@ -85,6 +85,10 @@
         <div id="structureStatus" class="muted">点击分析</div>
       </div>
       <div class="card">
+        <div class="title">当下关注点（可操作语境）</div>
+        <div id="actionFocus" class="muted">点击分析</div>
+      </div>
+      <div class="card">
         <div class="title">买卖点信号</div>
         <div id="signalList" class="muted">点击分析</div>
       </div>
@@ -117,6 +121,7 @@
       } catch (err) {
         showChartError(err.message || "分析失败");
         document.getElementById("structureStatus").innerHTML = `<span class="warn">${err.message}</span>`;
+        document.getElementById("actionFocus").innerHTML = `<span class="warn">分析失败，无法生成当下语境</span>`;
         document.getElementById("signalList").innerHTML = `<span class="warn">暂无信号</span>`;
       } finally {
         document.getElementById("loading").style.display = "none";
@@ -213,8 +218,9 @@
 
       document.getElementById("warning").textContent = result.warning || "";
       document.querySelector(".card .muted").textContent =
-        `数据来自 ${result.data_source}；规则版本 ${result.rules_version}。当前只展示缠论结构链路：分型、笔、线段、中枢、背驰和买卖点依据。`;
+        `数据来自 ${result.data_source}；规则版本 ${result.rules_version}。当前展示笔中枢与线段中枢，并要求买卖点带背驰依据。`;
       renderStructureStatus(result);
+      renderActionFocus(result);
       renderSignals(result);
     }
 
@@ -335,16 +341,19 @@
       const el = document.getElementById("structureStatus");
       const lastBi = result.bis[result.bis.length - 1];
       const active = result.active_bi;
+      const biPivots = result.zhongshus.filter(pivot => pivot.level === "bi").length;
+      const segmentPivots = result.zhongshus.filter(pivot => pivot.level === "segment").length;
       const directionLabel = dir => dir === "UP" ? "上升" : "下降";
       el.innerHTML = `
         <div>确认笔数量：<b>${result.bis.length}</b></div>
         <div>本级分型数量：<b>${result.fractals.length}</b></div>
         <div>线段数量：<b>${result.segments.length}</b></div>
-        <div>正式中枢数量：<b>${result.zhongshus.length}</b></div>
+        <div>笔中枢数量：<b>${biPivots}</b></div>
+        <div>线段中枢数量：<b>${segmentPivots}</b></div>
         <div>背驰候选：<b>${result.divergences.length}</b></div>
         ${lastBi ? `<div style="margin-top:8px;">最后确认笔：${directionLabel(lastBi.direction)}，${Number(lastBi.start_price).toFixed(2)} → ${Number(lastBi.end_price).toFixed(2)}</div>` : ""}
         ${active ? `<div style="margin-top:8px;color:#f1d28a;">当前未完成笔：${directionLabel(active.direction)}，${Number(active.start_price).toFixed(2)} → ${Number(active.end_price).toFixed(2)}</div>` : `<div style="margin-top:8px;">暂无未完成笔。</div>`}
-        <div style="margin-top:8px;color:rgba(232,236,246,.56);">没有 5 段中枢、离开段和背驰依据时，系统不会强行输出买卖点。</div>
+        <div style="margin-top:8px;color:rgba(232,236,246,.56);">没有同级别中枢、离开段和背驰依据时，系统不会强行输出买卖点。</div>
       `;
     }
 
@@ -352,11 +361,12 @@
       const signals = [...result.buy_signals, ...result.sell_signals].sort((a, b) => b.idx - a.idx);
       const el = document.getElementById("signalList");
       if (!signals.length) {
-        el.innerHTML = `<div class="muted">当前结构不足，暂无有效买卖点。需要先形成 5 段中枢，并出现带背驰依据的离开段。</div>`;
+        el.innerHTML = `<div class="muted">当前结构不足，暂无有效买卖点。需要先形成同级别中枢，并出现带背驰依据的离开段。</div>`;
         return;
       }
       const kindName = { first: "一类", second: "二类", third: "三类", td9: "TD9" };
-      el.innerHTML = signals.map(signal => `
+      el.innerHTML = `<div class="muted" style="margin-bottom:10px;">以下为已发生的结构快照，用于对照图表；日内操作请以上方「当下关注点」为准。</div>`;
+      el.innerHTML += signals.map(signal => `
         <div class="signal ${signal.side === "BUY" ? "buy" : "sell"}">
           <div class="signal-head">
             <span><span class="pill ${signal.side === "BUY" ? "buy" : "sell"}">${signal.side === "BUY" ? "BUY" : "SELL"}</span> ${kindName[signal.kind] || signal.kind}${signal.side === "BUY" ? "买点" : "卖点"}</span>
@@ -366,6 +376,138 @@
           ${signal.evidence ? `<p>依据：${signal.evidence}</p>` : ""}
         </div>
       `).join("");
+    }
+
+    function renderActionFocus(result) {
+      const el = document.getElementById("actionFocus");
+      if (!result.kline_data.length) {
+        el.innerHTML = `<div class="muted">暂无 K 线数据</div>`;
+        return;
+      }
+      if (result.action_focus) {
+        el.innerHTML = actionFocusHtmlFromApi(result.action_focus, result.active_bi);
+        return;
+      }
+      const lastIdx = result.kline_data.length - 1;
+      const px = result.current_price;
+      const dirLabel = d => d === "UP" ? "向上" : "向下";
+
+      const recentBars = Math.max(18, Math.min(80, Math.floor(result.kline_data.length * 0.06)));
+      const recentSince = lastIdx - recentBars;
+
+      const lastPivot = nearestPivotContainingLastBar(result.zhongshus, lastIdx);
+      let posText = "当前价格附近未落到已识别中枢区间内（或中枢列表为空）。";
+      if (lastPivot) {
+        const { zd, zg } = lastPivot;
+        if (px >= zd && px <= zg) {
+          posText = `价格 <b>${px.toFixed(2)}</b> 落在最近可视中枢 <b>[${zd.toFixed(2)}, ${zg.toFixed(2)}]</b> 内，属于中枢震荡语境。`;
+        } else if (px > zg) {
+          posText = `价格 <b>${px.toFixed(2)}</b> 在最近可视中枢 <b>[${zd.toFixed(2)}, ${zg.toFixed(2)}]</b> 上方，属于偏强离开/回踩观察语境。`;
+        } else {
+          posText = `价格 <b>${px.toFixed(2)}</b> 在最近可视中枢 <b>[${zd.toFixed(2)}, ${zg.toFixed(2)}]</b> 下方，属于偏弱离开/反抽观察语境。`;
+        }
+      }
+
+      let activeLine = `<div>未完成笔：暂无（等待新笔启动或结构太短）</div>`;
+      if (result.active_bi) {
+        const ab = result.active_bi;
+        activeLine = `<div>未完成笔：<b>${dirLabel(ab.direction)}</b>，${Number(ab.start_price).toFixed(2)} → ${Number(ab.end_price).toFixed(2)}（仅表示当下这一段<strong>尚未被反向分型确认</strong>）</div>`;
+      }
+
+      const lastDiv = latestDivergenceNearEnd(result.divergences, recentSince);
+      let divLine = `<div style="margin-top:8px;">最近窗口背驰：最近 ${recentBars} 根内<strong>未发现</strong>可对照的背驰候选。</div>`;
+      if (lastDiv) {
+        const lvl = lastDiv.level === "bi" ? "笔" : "线段";
+        divLine = `<div style="margin-top:8px;">最近窗口背驰：<b>${lvl}</b>方向 <b>${lastDiv.direction === "DOWN" ? "底背驰语境" : "顶背驰语境"}</b>，MACD 比 <b>${Number(lastDiv.ratio).toFixed(2)}</b>（仅说明力度对比，不代表此刻应下单）</div>`;
+      }
+
+      const recentSignal = latestSignalNearEnd([...result.buy_signals, ...result.sell_signals], recentSince);
+      let hintLine = `<div style="margin-top:8px;color:rgba(232,236,246,.62);">当前没有“指令式”买卖点：本系统只做结构披露。若你要参与，至少需要你自己承受波动，并独立完成止损规则。</div>`;
+      if (recentSignal) {
+        const sideCn = recentSignal.side === "BUY" ? "买" : "卖";
+        const kindName = { first: "一类", second: "二类", third: "三类", td9: "TD9" };
+        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>提醒</b>：最近窗口内出现过<b>${kindName[recentSignal.kind] || recentSignal.kind}${sideCn}</b>候选（${recentSignal.time}）。它只是结构回放，<b>不等于</b>此刻应进场；此刻仍以未完成笔与中枢位置为主。</div>`;
+      }
+
+      el.innerHTML = `
+        <div>最新价：<b>${px.toFixed(2)}</b>（最后一根 K 线索引 ${lastIdx}）</div>
+        ${activeLine}
+        <div style="margin-top:8px;">${posText}</div>
+        ${divLine}
+        ${hintLine}
+        <div style="margin-top:10px;color:rgba(232,236,246,.56);">说明：缠论里没有脱离级别的“现在就买/卖”。你要自己做交易，需要先选定主操作级别，再用更大级别定方向，本页只提供当前级别的结构与证据。</div>
+      `;
+    }
+
+    function actionFocusHtmlFromApi(actionFocus, activeBiFallback) {
+      const px = Number(actionFocus.current_price ?? 0);
+      const lastIdx = Number(actionFocus.last_bar_index ?? 0);
+      const recentBars = Number(actionFocus.recent_window_bars ?? 18);
+      const dirLabel = d => d === "UP" ? "向上" : "向下";
+
+      const slotLine = (label, slot) => {
+        if (!slot || slot.relation === "none" || !slot.pivot) return `<div style="margin-top:8px;">${label}：当前无可用中枢参考。</div>`;
+        const { zd, zg } = slot.pivot;
+        if (slot.relation === "inside") {
+          return `<div style="margin-top:8px;">${label}：价格 <b>${px.toFixed(2)}</b> 落在中枢 <b>[${Number(zd).toFixed(2)}, ${Number(zg).toFixed(2)}]</b> 内，属于中枢震荡语境。</div>`;
+        }
+        if (slot.relation === "above") {
+          return `<div style="margin-top:8px;">${label}：价格 <b>${px.toFixed(2)}</b> 在中枢 <b>[${Number(zd).toFixed(2)}, ${Number(zg).toFixed(2)}]</b> 上方，属于偏强离开/回踩观察语境。</div>`;
+        }
+        return `<div style="margin-top:8px;">${label}：价格 <b>${px.toFixed(2)}</b> 在中枢 <b>[${Number(zd).toFixed(2)}, ${Number(zg).toFixed(2)}]</b> 下方，属于偏弱离开/反抽观察语境。</div>`;
+      };
+
+      const active = actionFocus.active_bi || activeBiFallback;
+      let activeLine = `<div>未完成笔：暂无（等待新笔启动或结构太短）</div>`;
+      if (active) {
+        activeLine = `<div>未完成笔：<b>${dirLabel(active.direction)}</b>，${Number(active.start_price).toFixed(2)} → ${Number(active.end_price).toFixed(2)}（仅表示当下这一段<strong>尚未被反向分型确认</strong>）</div>`;
+      }
+
+      let divLine = `<div style="margin-top:8px;">最近窗口背驰：最近 ${recentBars} 根内<strong>未发现</strong>可对照的背驰候选。</div>`;
+      if (actionFocus.recent_divergence) {
+        const d = actionFocus.recent_divergence;
+        const lvl = d.level === "bi" ? "笔" : "线段";
+        divLine = `<div style="margin-top:8px;">最近窗口背驰：<b>${lvl}</b>方向 <b>${d.direction === "DOWN" ? "底背驰语境" : "顶背驰语境"}</b>，MACD 比 <b>${Number(d.ratio).toFixed(2)}</b>（仅说明力度对比，不代表此刻应下单）</div>`;
+      }
+
+      let hintLine = `<div style="margin-top:8px;color:rgba(232,236,246,.62);">当前没有“指令式”买卖点：本系统只做结构披露。若你要参与，至少需要你自己承受波动，并独立完成止损规则。</div>`;
+      if (actionFocus.recent_signal) {
+        const s = actionFocus.recent_signal;
+        const sideCn = s.side === "BUY" ? "买" : "卖";
+        const kindName = { first: "一类", second: "二类", third: "三类", td9: "TD9" };
+        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>提醒</b>：最近窗口内出现过<b>${kindName[s.kind] || s.kind}${sideCn}</b>候选（${s.time}）。它只是结构回放，<b>不等于</b>此刻应进场；此刻仍以未完成笔与中枢位置为主。</div>`;
+      }
+
+      return `
+        <div>最新价：<b>${px.toFixed(2)}</b>（最后一根 K 线索引 ${lastIdx}）</div>
+        ${activeLine}
+        ${slotLine("本级中枢", actionFocus.primary_pivot)}
+        ${slotLine("中级别中枢", actionFocus.higher_pivot)}
+        ${divLine}
+        ${hintLine}
+        <div style="margin-top:10px;color:rgba(232,236,246,.56);">说明：缠论里没有脱离级别的“现在就买/卖”。你要自己做交易，需要先选定主操作级别，再用更大级别定方向，本页只提供当前级别的结构与证据。</div>
+      `;
+    }
+
+    function nearestPivotContainingLastBar(pivots, lastIdx) {
+      if (!pivots.length) return null;
+      const candidates = pivots.filter(p => lastIdx >= p.start_idx && lastIdx <= p.end_idx);
+      if (!candidates.length) {
+        return pivots.reduce((best, p) => (p.end_idx > best.end_idx ? p : best), pivots[0]);
+      }
+      return candidates.reduce((best, p) => (p.end_idx - p.start_idx > best.end_idx - best.start_idx ? p : best), candidates[0]);
+    }
+
+    function latestDivergenceNearEnd(divergences, sinceIdx) {
+      const windowed = divergences.filter(d => d.idx >= sinceIdx);
+      if (!windowed.length) return null;
+      return windowed.reduce((a, b) => (a.idx > b.idx ? a : b));
+    }
+
+    function latestSignalNearEnd(signals, sinceIdx) {
+      const windowed = signals.filter(s => s.idx >= sinceIdx);
+      if (!windowed.length) return null;
+      return windowed.reduce((a, b) => (a.idx > b.idx ? a : b));
     }
 
     document.getElementById("analyzeBtn").addEventListener("click", analyze);

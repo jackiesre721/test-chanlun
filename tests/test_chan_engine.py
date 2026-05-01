@@ -163,6 +163,25 @@ def test_pivot_is_created_when_three_strokes_overlap() -> None:
 
     assert len(pivots) == 1
     assert pivots[0].zd < pivots[0].zg
+    assert pivots[0].level == "bi"
+
+
+def test_duplicate_same_direction_pivots_are_merged() -> None:
+    from app.core.models import Direction, Stroke
+
+    strokes = [
+        Stroke(start_idx=0, end_idx=5, start_price=10, end_price=20, direction=Direction.UP),
+        Stroke(start_idx=5, end_idx=10, start_price=20, end_price=10, direction=Direction.DOWN),
+        Stroke(start_idx=10, end_idx=15, start_price=10, end_price=20, direction=Direction.UP),
+        Stroke(start_idx=15, end_idx=20, start_price=10, end_price=20, direction=Direction.UP),
+        Stroke(start_idx=20, end_idx=25, start_price=10, end_price=20, direction=Direction.UP),
+    ]
+
+    pivots = build_pivots(strokes)
+
+    assert len(pivots) == 1
+    assert pivots[0].start_idx == 0
+    assert pivots[0].end_idx == 15
 
 
 def test_segments_are_built_from_three_or_more_strokes() -> None:
@@ -231,8 +250,49 @@ def test_segment_pivot_extends_while_new_segment_overlaps() -> None:
     assert len(pivots) == 1
     assert pivots[0].start_bi == 1
     assert pivots[0].end_bi == 4
-    assert pivots[0].zd == 16
+    assert pivots[0].zd == 14
     assert pivots[0].zg == 17
+
+
+def test_segment_pivot_extension_keeps_initial_price_range() -> None:
+    from app.core.models import Direction, Segment
+
+    segments = [
+        Segment(start_bi=0, end_bi=2, start_idx=0, end_idx=5, start_price=8, end_price=18, direction=Direction.UP),
+        Segment(start_bi=2, end_bi=4, start_idx=5, end_idx=10, start_price=18, end_price=12, direction=Direction.DOWN),
+        Segment(start_bi=4, end_bi=6, start_idx=10, end_idx=15, start_price=14, end_price=22, direction=Direction.UP),
+        Segment(start_bi=6, end_bi=8, start_idx=15, end_idx=20, start_price=17, end_price=13, direction=Direction.DOWN),
+        Segment(start_bi=8, end_bi=10, start_idx=20, end_idx=25, start_price=16, end_price=19, direction=Direction.UP),
+        Segment(start_bi=10, end_bi=12, start_idx=25, end_idx=30, start_price=18, end_price=24, direction=Direction.UP),
+    ]
+
+    pivot = build_segment_pivots(segments)[0]
+
+    assert pivot.zd == 14
+    assert pivot.zg == 17
+    assert pivot.end_bi == 4
+
+
+def test_bi_pivot_can_generate_divergence_without_segments() -> None:
+    from app.core.models import Direction, Stroke
+
+    strokes = [
+        Stroke(start_idx=0, end_idx=5, start_price=100, end_price=80, direction=Direction.DOWN),
+        Stroke(start_idx=5, end_idx=10, start_price=80, end_price=95, direction=Direction.UP),
+        Stroke(start_idx=10, end_idx=15, start_price=95, end_price=85, direction=Direction.DOWN),
+        Stroke(start_idx=15, end_idx=20, start_price=85, end_price=93, direction=Direction.UP),
+        Stroke(start_idx=20, end_idx=25, start_price=93, end_price=75, direction=Direction.DOWN),
+    ]
+    macd = _flat_macd(30, 1.0)
+    for idx in range(0, 6):
+        macd[idx].hist = 10
+
+    pivots = build_pivots(strokes)
+    divergences = build_divergences(strokes, pivots, macd)
+
+    assert pivots[0].level == "bi"
+    assert len(divergences) == 1
+    assert divergences[0].level == "bi"
 
 
 def test_first_buy_signal_requires_leaving_pivot_divergence() -> None:
@@ -288,6 +348,46 @@ def test_no_signal_without_segment_divergence() -> None:
     assert sell_signals == []
 
 
+def test_divergence_ratio_threshold_is_configurable() -> None:
+    from app.core.models import Direction, Pivot, Segment
+
+    segments = [
+        Segment(start_bi=0, end_bi=2, start_idx=0, end_idx=5, start_price=100, end_price=80, direction=Direction.DOWN),
+        Segment(start_bi=2, end_bi=4, start_idx=5, end_idx=10, start_price=80, end_price=95, direction=Direction.UP),
+        Segment(start_bi=4, end_bi=6, start_idx=10, end_idx=15, start_price=95, end_price=85, direction=Direction.DOWN),
+        Segment(start_bi=6, end_bi=8, start_idx=15, end_idx=20, start_price=85, end_price=93, direction=Direction.UP),
+        Segment(start_bi=8, end_bi=10, start_idx=20, end_idx=25, start_price=93, end_price=75, direction=Direction.DOWN),
+    ]
+    pivot = Pivot(start_bi=1, end_bi=3, start_idx=5, end_idx=20, zd=85, zg=93)
+    macd = _flat_macd(40, 1.0)
+    for idx in range(0, 6):
+        macd[idx].hist = 10
+    for idx in range(20, 26):
+        macd[idx].hist = 7
+
+    assert build_divergences(segments, [pivot], macd, max_area_ratio=0.8)
+    assert build_divergences(segments, [pivot], macd, max_area_ratio=0.6) == []
+
+
+def test_divergence_requires_minimum_breakout() -> None:
+    from app.core.models import Direction, Pivot, Segment
+
+    segments = [
+        Segment(start_bi=0, end_bi=2, start_idx=0, end_idx=5, start_price=100, end_price=80, direction=Direction.DOWN),
+        Segment(start_bi=2, end_bi=4, start_idx=5, end_idx=10, start_price=80, end_price=95, direction=Direction.UP),
+        Segment(start_bi=4, end_bi=6, start_idx=10, end_idx=15, start_price=95, end_price=85, direction=Direction.DOWN),
+        Segment(start_bi=6, end_bi=8, start_idx=15, end_idx=20, start_price=85, end_price=93, direction=Direction.UP),
+        Segment(start_bi=8, end_bi=10, start_idx=20, end_idx=25, start_price=93, end_price=79.7, direction=Direction.DOWN),
+    ]
+    pivot = Pivot(start_bi=1, end_bi=3, start_idx=5, end_idx=20, zd=85, zg=93)
+    macd = _flat_macd(40, 1.0)
+    for idx in range(0, 6):
+        macd[idx].hist = 10
+
+    assert build_divergences(segments, [pivot], macd, min_breakout_ratio=0.0)
+    assert build_divergences(segments, [pivot], macd, min_breakout_ratio=0.1) == []
+
+
 def test_second_buy_signal_requires_retest_above_first_buy_low() -> None:
     from app.core.models import Direction, Pivot, Segment
 
@@ -309,8 +409,9 @@ def test_second_buy_signal_requires_retest_above_first_buy_low() -> None:
     divergences = build_divergences(segments, [pivot], macd)
     buy_signals, _ = build_signals(candles, segments, [pivot], divergences)
 
-    assert [signal.kind for signal in buy_signals] == ["first", "second"]
-    assert buy_signals[1].price == 78
+    assert [signal.kind for signal in buy_signals] == ["second"]
+    assert buy_signals[0].price == 78
+    assert buy_signals[0].evidence is not None
 
 
 def test_third_buy_signal_requires_pullback_above_pivot() -> None:
@@ -359,6 +460,20 @@ def test_active_stroke_tracks_unconfirmed_move_after_last_confirmed_bi() -> None
     assert active.start_idx == 2
     assert active.end_idx == 4
     assert active.end_price == 14
+
+
+def test_active_stroke_ignores_tiny_noise_move() -> None:
+    from app.core.models import Direction, Stroke
+
+    candles = [
+        _candle(0, 10.2, 9.8),
+        _candle(1, 11.5, 10.8),
+    ]
+    strokes = [
+        Stroke(start_idx=0, end_idx=0, start_price=20, end_price=10, direction=Direction.DOWN),
+    ]
+
+    assert build_active_stroke(candles, strokes) is None
 
 
 def test_active_stroke_uses_extreme_source_index_from_normalized_candle() -> None:

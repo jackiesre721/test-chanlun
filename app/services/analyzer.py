@@ -1,10 +1,10 @@
 from typing import Optional
 
+from app.core.config import settings
 from app.core.models import (
     AnalyzeRequest,
     AnalyzeResponse,
     Candle,
-    Market,
     MultiAnalyzeRequest,
     MultiAnalyzeResponse,
     MultiAnalyzeResultRow,
@@ -13,6 +13,7 @@ from app.core.models import (
 )
 from app.core.errors import MarketDataError
 from app.repositories.market_data import BinanceRepository
+from app.services.analyze_disk_cache import load_cached_analyze_result, save_cached_analyze_result
 from app.services.analysis_pipeline import build_analyze_response
 
 HIGHER_INTERVAL = {
@@ -31,6 +32,22 @@ class AnalyzerService:
         self._market_data = market_data
 
     async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
+        anchor_ms: Optional[int] = None
+        if settings.analyze_disk_cache_enabled and request.glm_verdict is None:
+            try:
+                tip = await self._market_data.get_klines(request.symbol, request.interval, limit=1)
+                if tip:
+                    anchor_ms = int(tip[-1].open_time)
+                    cached = load_cached_analyze_result(
+                        request=request,
+                        eff_limit=request.limit,
+                        anchor_open_time_ms=anchor_ms,
+                    )
+                    if cached is not None:
+                        return cached
+            except MarketDataError:
+                anchor_ms = None
+
         candles = await self._market_data.get_klines(
             symbol=request.symbol,
             interval=request.interval,
@@ -59,6 +76,16 @@ class AnalyzerService:
             body["glm_full_context"] = g.glm_full_context
             glm_out = await verdict_from_analyze_payload(body)
             result = result.model_copy(update={"glm_verdict": glm_out})
+        save_anchor = anchor_ms
+        if save_anchor is None and result.kline_data:
+            save_anchor = int(result.kline_data[-1].open_time)
+        if save_anchor is not None:
+            save_cached_analyze_result(
+                request=request,
+                eff_limit=request.limit,
+                anchor_open_time_ms=save_anchor,
+                response=result,
+            )
         return result
 
     async def analyze_multi(self, request: MultiAnalyzeRequest) -> MultiAnalyzeResponse:

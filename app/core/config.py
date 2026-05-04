@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     zhipu_model: str = "glm-4.7"
     ai_verdict_timeout_seconds: float = Field(default=45.0, gt=2.0, le=120.0)
 
+    analyze_disk_cache_enabled: bool = Field(default=False)
+    analyze_disk_cache_dir: str = Field(default=".cache/analyze")
+    analyze_disk_cache_max_files: int = Field(default=80, ge=0, le=10_000)
+
     model_config = SettingsConfigDict(env_prefix="CHANLAN_", env_file=".env", extra="ignore")
 
 

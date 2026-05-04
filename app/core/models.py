@@ -384,7 +384,7 @@ class AnalyzeRequest(BaseModel):
     market: Market = Market.CRYPTO
     symbol: str = "BTCUSDT"
     interval: str = "1"
-    limit: int = Field(default=1000, ge=100, le=1000)
+    limit: int = Field(default=2500, ge=100, le=15000)
     # 若设置，则在同一次 /analyze 内调用智谱并写入响应的 glm_verdict（适合网关不转发 /analyze/verdict 时）。
     glm_verdict: Optional[GlmVerdictInlineOptions] = None
 
@@ -450,12 +450,12 @@ class BarAggregateResponse(BaseModel):
 
 
 class MultiAnalyzeRequest(BaseModel):
-    """并行请求多个周期分析（每个周期仍遵守单笔最大 limit）。"""
+    """并行请求多个周期分析（每个周期单独拉行情；超过 Binance 单次条数时仓储分页）。"""
 
     market: Market = Market.CRYPTO
     symbol: str = "BTCUSDT"
     intervals: list[str] = Field(default_factory=lambda: ["60", "240", "1440"])
-    limit: int = Field(default=1000, ge=100, le=1000)
+    limit: int = Field(default=2500, ge=100, le=15000)
 
     @field_validator("symbol")
     @classmethod

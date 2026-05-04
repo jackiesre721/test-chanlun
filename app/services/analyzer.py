@@ -34,6 +34,7 @@ class AnalyzerService:
         self._market_data = market_data
 
     async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
+        fetch_limit = min(request.limit, settings.analyze_max_bars)
         anchor_ms: Optional[int] = None
         if settings.analyze_disk_cache_enabled and request.glm_verdict is None:
             try:
@@ -42,7 +43,7 @@ class AnalyzerService:
                     anchor_ms = int(tip[-1].open_time)
                     cached = load_cached_analyze_result(
                         request=request,
-                        eff_limit=request.limit,
+                        eff_limit=fetch_limit,
                         anchor_open_time_ms=anchor_ms,
                     )
                     if cached is not None:
@@ -52,20 +53,19 @@ class AnalyzerService:
 
         hi_key = HIGHER_INTERVAL.get(request.interval)
         tasks = [
-            self._market_data.get_klines(
+            self._market_data.get_klines_history(
                 symbol=request.symbol,
                 interval=request.interval,
-                limit=request.limit,
+                max_bars=fetch_limit,
             ),
         ]
-        higher_limit: Optional[int] = None
         if hi_key:
-            higher_limit = max(120, min(1000, request.limit // 3))
+            higher_need = max(120, min(settings.analyze_max_bars, fetch_limit // 3))
             tasks.append(
-                self._market_data.get_klines(
+                self._market_data.get_klines_history(
                     symbol=request.symbol,
                     interval=hi_key,
-                    limit=higher_limit,
+                    max_bars=higher_need,
                 ),
             )
 
@@ -109,7 +109,7 @@ class AnalyzerService:
             await asyncio.to_thread(
                 lambda: save_cached_analyze_result(
                     request=request,
-                    eff_limit=request.limit,
+                    eff_limit=fetch_limit,
                     anchor_open_time_ms=save_anchor,
                     response=result,
                 )

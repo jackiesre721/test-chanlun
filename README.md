@@ -20,12 +20,17 @@ uvicorn app.main:app --reload
 
 打开 `http://127.0.0.1:8000`。
 
+## 本地持久化（默认）
+
+- **模拟盘** `POST /trade/paper`：SQLite（默认 `.cache/chanlan/paper_orders.sqlite`，可用 `CHANLAN_PAPER_ORDERS_DB_PATH`）。
+- **分析缓存**：命中相同锚点时跳过远程拉取与重算（默认 `.cache/analyze/`，可用 `CHANLAN_ANALYZE_DISK_CACHE_ENABLED=false` 关闭）。
+
 ## API
 
 ```bash
 curl -X POST http://127.0.0.1:8000/analyze \
   -H 'Content-Type: application/json' \
-  -d '{"market":"crypto","symbol":"BTCUSDT","interval":"240","limit":1000}'
+  -d '{"market":"crypto","symbol":"BTCUSDT","interval":"240","limit":2500}'
 ```
 
 ## 当前规则说明

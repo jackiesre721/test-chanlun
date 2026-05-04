@@ -921,8 +921,8 @@
       fakeBi: "rgba(189,189,189,.45)"
     };
 
-    /** 与后端 AnalyzeRequest.limit 一致（Binance 单次最多 1000） */
-    const ANALYZE_LIMIT = 1000;
+    /** 与后端 AnalyzeRequest.limit 一致（服务端可按 analyze_max_bars 封顶；Binance 侧自动分页） */
+    const ANALYZE_LIMIT = 2500;
 
     const LAYER_PRESETS = {
       minimal: {

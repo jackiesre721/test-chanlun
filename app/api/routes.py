@@ -118,7 +118,7 @@ def trade_paper(payload: PaperOrderRequest) -> PaperOrderResponse:
     )
     return PaperOrderResponse(
         accepted=True,
-        reason="Recorded in-process paper log only (not sent to any exchange).",
+        reason="Recorded to local SQLite paper log only (not sent to any exchange).",
         order_id=oid,
     )
 

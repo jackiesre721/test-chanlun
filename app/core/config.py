@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     binance_base_url: str = "https://api.binance.com"
     request_timeout_seconds: float = Field(default=12.0, gt=0)
     max_klines_limit: int = Field(default=1000, ge=100, le=1000)
+    # /analyze 允许请求的合并 K 数量上限（Binance 单次最多 max_klines_limit，仓储侧会自动分页）。
+    analyze_max_bars: int = Field(default=5000, ge=500, le=15000)
     divergence_ratio: float = Field(default=0.8, gt=0, le=1)
     divergence_min_breakout_ratio: float = Field(default=0.05, ge=0)
     pivot_dedupe_overlap_ratio: float = Field(default=0.95, gt=0, le=1)
@@ -18,6 +20,8 @@ class Settings(BaseSettings):
     backtest_max_bars: int = Field(default=30_000, ge=1000, le=500_000)
     paper_trading_enabled: bool = Field(default=True)
     live_trading_enabled: bool = Field(default=False)
+    paper_orders_db_path: str = Field(default=".cache/chanlan/paper_orders.sqlite")
+    paper_orders_max_rows: int = Field(default=5000, ge=0, le=500_000)
 
     # 24 课：用 MACD 判背驰时，中枢段 B 往往把黄白线（DIF）拉回 0 轴附近；默认关闭以免误杀信号。
     divergence_require_pivot_macd_zero_axis: bool = Field(default=False)
@@ -73,7 +77,7 @@ class Settings(BaseSettings):
     zhipu_model: str = "glm-4.7"
     ai_verdict_timeout_seconds: float = Field(default=45.0, gt=2.0, le=120.0)
 
-    analyze_disk_cache_enabled: bool = Field(default=False)
+    analyze_disk_cache_enabled: bool = Field(default=True)
     analyze_disk_cache_dir: str = Field(default=".cache/analyze")
     analyze_disk_cache_max_files: int = Field(default=80, ge=0, le=10_000)
 

@@ -1,27 +1,26 @@
 from typing import Optional
 
-from app.core.models import AnalyzeRequest, AnalyzeResponse, Candle, Market, Pivot, Stroke
+from app.core.models import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    Candle,
+    Market,
+    MultiAnalyzeRequest,
+    MultiAnalyzeResponse,
+    MultiAnalyzeResultRow,
+    Pivot,
+    Stroke,
+)
 from app.core.errors import MarketDataError
 from app.repositories.market_data import BinanceRepository
-from app.services.chan_engine import (
-    build_active_stroke,
-    build_divergences,
-    build_segment_pivots,
-    build_segments,
-    build_signals,
-    build_pivots,
-    build_strokes,
-    find_fractals,
-    normalize_candles,
-)
-from app.services.action_focus import build_action_focus
-from app.services.indicators import td_sequential, macd
-
-RULES_VERSION = "strict-chan-v5"
+from app.services.analysis_pipeline import build_analyze_response
 
 HIGHER_INTERVAL = {
     "1": "15",
     "15": "30",
+    "30": "60",
+    "60": "240",
+    "240": "1440",
 }
 
 
@@ -37,71 +36,51 @@ class AnalyzerService:
             interval=request.interval,
             limit=request.limit,
         )
-        normalized = normalize_candles(candles)
-        fractals = find_fractals(normalized)
-        strokes = build_strokes(fractals, candles=normalized)
-        active_stroke = build_active_stroke(normalized, strokes)
-        segments = build_segments(strokes)
-        bi_pivots = build_pivots(strokes)
-        segment_pivots = build_segment_pivots(segments)
-        pivots = bi_pivots + segment_pivots
-        higher_strokes, higher_pivots = await self._analyze_higher_level(request, candles)
-        display_macd = macd(candles)
-        bi_divergences = build_divergences(strokes, bi_pivots, display_macd)
-        segment_divergences = build_divergences(segments, segment_pivots, display_macd)
-        divergences = bi_divergences + segment_divergences
-        bi_buy_signals, bi_sell_signals = build_signals(candles, strokes, bi_pivots, bi_divergences)
-        segment_buy_signals, segment_sell_signals = build_signals(candles, segments, segment_pivots, segment_divergences)
-        all_buy = sorted(bi_buy_signals + segment_buy_signals, key=lambda s: s.idx)
-        all_sell = sorted(bi_sell_signals + segment_sell_signals, key=lambda s: s.idx)
-        buy_signals = all_buy[-12:]
-        sell_signals = all_sell[-12:]
-        last_i = len(candles) - 1
-        action_focus = build_action_focus(
-            current_price=candles[-1].close,
-            last_bar_index=last_i,
-            kline_count=len(candles),
-            zhongshus=pivots,
-            zhongshus_lv2=higher_pivots,
-            active_bi=active_stroke,
-            divergences=divergences,
-            buy_signals=all_buy,
-            sell_signals=all_sell,
-        )
-        td = td_sequential(candles)
-
-        return AnalyzeResponse(
+        higher_strokes, higher_pivots, higher_norm = await self._analyze_higher_level(request, candles)
+        result = build_analyze_response(
+            candles,
             market=request.market,
             symbol=request.symbol,
             interval=request.interval,
-            current_price=candles[-1].close,
-            data_source="Binance spot",
-            rules_version=RULES_VERSION,
-            kline_data=candles,
-            macd_data=display_macd,
-            fractals=fractals,
-            bis=strokes,
-            active_bi=active_stroke,
-            segments=segments,
-            divergences=divergences,
-            bis_lv2=higher_strokes,
-            zhongshus=pivots,
-            zhongshus_lv2=higher_pivots,
-            buy_signals=buy_signals,
-            sell_signals=sell_signals,
-            td_summary=td,
-            action_focus=action_focus,
-            warning=_warning_for(request.market, len(candles), len(strokes)),
+            higher_strokes=higher_strokes,
+            higher_pivots=higher_pivots,
+            higher_interval=HIGHER_INTERVAL.get(request.interval),
+            higher_candles_normalized=higher_norm,
         )
+        if request.glm_verdict is not None:
+            from app.services.ai_glm_verdict import verdict_from_analyze_payload
+
+            body = result.model_dump(mode="json")
+            g = request.glm_verdict
+            if g.glm_api_key:
+                body["glm_api_key"] = g.glm_api_key
+            if g.glm_model:
+                body["glm_model"] = g.glm_model
+            body["glm_full_context"] = g.glm_full_context
+            glm_out = await verdict_from_analyze_payload(body)
+            result = result.model_copy(update={"glm_verdict": glm_out})
+        return result
+
+    async def analyze_multi(self, request: MultiAnalyzeRequest) -> MultiAnalyzeResponse:
+        rows: list[MultiAnalyzeResultRow] = []
+        for interval in request.intervals:
+            single = AnalyzeRequest(
+                market=request.market,
+                symbol=request.symbol,
+                interval=interval,
+                limit=request.limit,
+            )
+            rows.append(MultiAnalyzeResultRow(interval=interval, result=await self.analyze(single)))
+        return MultiAnalyzeResponse(market=request.market, symbol=request.symbol, results=rows)
 
     async def _analyze_higher_level(
         self,
         request: AnalyzeRequest,
         base_candles: list[Candle],
-    ) -> tuple[list[Stroke], list[Pivot]]:
+    ) -> tuple[list[Stroke], list[Pivot], Optional[list[Candle]]]:
         higher_interval = HIGHER_INTERVAL.get(request.interval)
         if higher_interval is None:
-            return [], []
+            return [], [], None
 
         higher_limit = max(120, min(1000, request.limit // 3))
         try:
@@ -111,31 +90,52 @@ class AnalyzerService:
                 limit=higher_limit,
             )
         except MarketDataError:
-            return [], []
+            return [], [], None
+        from app.services.chan_engine import (
+            build_pivots,
+            build_segment_pivots,
+            build_segments,
+            build_strokes,
+            find_fractals,
+            normalize_candles,
+        )
+
         higher_normalized = normalize_candles(higher_candles)
+        base_normalized = normalize_candles(base_candles)
         higher_strokes = build_strokes(find_fractals(higher_normalized), candles=higher_normalized)
         higher_segments = build_segments(higher_strokes)
         higher_pivots = build_pivots(higher_strokes) + build_segment_pivots(higher_segments)
         return (
-            [_map_stroke_to_base(stroke, higher_candles, base_candles) for stroke in higher_strokes],
-            [_map_pivot_to_base(pivot, higher_candles, base_candles) for pivot in higher_pivots],
+            [_map_stroke_to_base(stroke, higher_normalized, base_normalized) for stroke in higher_strokes],
+            [_map_pivot_to_base(pivot, higher_normalized, base_normalized) for pivot in higher_pivots],
+            higher_normalized,
         )
 
 
-def _map_stroke_to_base(stroke: Stroke, higher_candles: list[Candle], base_candles: list[Candle]) -> Stroke:
+def _map_stroke_to_base(stroke: Stroke, higher_norm: list[Candle], base_norm: list[Candle]) -> Stroke:
+    hi_lo = min(stroke.start_idx, stroke.end_idx)
+    hi_hi = max(stroke.start_idx, stroke.end_idx)
+    hi_lo = max(0, min(hi_lo, len(higher_norm) - 1)) if higher_norm else 0
+    hi_hi = max(0, min(hi_hi, len(higher_norm) - 1)) if higher_norm else 0
+    t_lo = higher_norm[hi_lo].open_time if higher_norm else None
+    t_hi = higher_norm[hi_hi].open_time if higher_norm else None
     return stroke.model_copy(
         update={
-            "start_idx": _map_higher_index_to_base(stroke.start_idx, stroke.start_price, higher_candles, base_candles),
-            "end_idx": _map_higher_index_to_base(stroke.end_idx, stroke.end_price, higher_candles, base_candles),
+            "start_idx": _map_higher_index_to_base(stroke.start_idx, stroke.start_price, higher_norm, base_norm),
+            "end_idx": _map_higher_index_to_base(stroke.end_idx, stroke.end_price, higher_norm, base_norm),
+            "higher_origin_bar_lo": hi_lo,
+            "higher_origin_bar_hi": hi_hi,
+            "higher_origin_open_time_lo": t_lo,
+            "higher_origin_open_time_hi": t_hi,
         }
     )
 
 
-def _map_pivot_to_base(pivot: Pivot, higher_candles: list[Candle], base_candles: list[Candle]) -> Pivot:
+def _map_pivot_to_base(pivot: Pivot, higher_norm: list[Candle], base_norm: list[Candle]) -> Pivot:
     return pivot.model_copy(
         update={
-            "start_idx": _map_higher_index_to_base(pivot.start_idx, pivot.zd, higher_candles, base_candles),
-            "end_idx": _map_higher_index_to_base(pivot.end_idx, pivot.zg, higher_candles, base_candles),
+            "start_idx": _map_higher_index_to_base(pivot.start_idx, pivot.zd, higher_norm, base_norm),
+            "end_idx": _map_higher_index_to_base(pivot.end_idx, pivot.zg, higher_norm, base_norm),
         }
     )
 
@@ -146,30 +146,15 @@ def _map_higher_index_to_base(
     higher_candles: list[Candle],
     base_candles: list[Candle],
 ) -> int:
+    """将上级（已标准化）K 线索引映射到本级标准化 K 线索引：半开时间区间 [open_time, next.open_time)。"""
+    if not higher_candles or not base_candles:
+        return 0
     safe_idx = min(max(higher_idx, 0), len(higher_candles) - 1)
     start_time = higher_candles[safe_idx].open_time
     end_time = higher_candles[safe_idx + 1].open_time if safe_idx + 1 < len(higher_candles) else start_time + 1
     candidates = [
-        idx
-        for idx, candle in enumerate(base_candles)
-        if start_time <= candle.open_time < end_time
+        idx for idx, candle in enumerate(base_candles) if start_time <= candle.open_time < end_time
     ]
     if not candidates:
-        return min(
-            range(len(base_candles)),
-            key=lambda idx: abs(base_candles[idx].open_time - start_time),
-        )
-    return min(
-        candidates,
-        key=lambda idx: min(abs(base_candles[idx].high - price), abs(base_candles[idx].low - price)),
-    )
-
-
-def _warning_for(market: Market, candle_count: int, stroke_count: int) -> Optional[str]:
-    if market != Market.CRYPTO:
-        return "当前 MVP 仅实现数字货币市场。"
-    if candle_count < 200:
-        return "K 线数量偏少，分型和背驰稳定性会下降。"
-    if stroke_count < 6:
-        return "当前周期可用笔较少，买卖点仅供观察。"
-    return None
+        return min(range(len(base_candles)), key=lambda idx: abs(base_candles[idx].open_time - start_time))
+    return min(candidates, key=lambda idx: min(abs(base_candles[idx].high - price), abs(base_candles[idx].low - price)))

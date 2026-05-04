@@ -17,6 +17,7 @@ from app.core.models import (
     AiVerdictResponse,
     AnalyzeResponse,
     Candle,
+    Direction,
     Signal,
     SignalSide,
 )
@@ -46,7 +47,13 @@ _BIAS = Literal["long", "short", "neutral"]
 
 _SYSTEM_PROMPT = """你是缠论结构分析助手（不是证券投资顾问）。
 用户 JSON 为程序根据 K 线推导的缠论数据（可能是全量字段或摘要）。
-请结合中枢 ZD/ZG、最新买卖点价、未完成笔、背驰、走势形态、进阶结构等，用中文归纳语境，并给出**结构推演用的参考价位**（数字须与输入中价位同量级、可从 ZD/ZG/信号价/现价推演）。
+请结合中枢 ZD/ZG、买卖点价、未完成笔、背驰、走势形态、进阶结构等，用中文归纳语境，并给出**结构推演用的参考价位**（数字须与输入中价位同量级、可从 ZD/ZG/信号价/现价推演）。
+
+叙事重心（非常重要）：
+- 用户关心的是**后续行情结构与关键观察点**，不是「复述已经走出的 K 线故事」。
+- summary_zh 必须以**接下来要盯什么**为主（区间突破/回抽、离开段是否延伸、背驰是否被确认等）；已出现的买卖点若需提及，只作**价位与结构锚点**，一句话内点到即可，不要以大段回放为主语。
+- reasons_zh：2–8 条中，**至少一半**应写「若价格如何演化，结构含义可能如何变化」或「下一步确认/证伪需要什么条件」；至多 1 条用简短句说明「最近一条信号仅作锚点（时间/价位）」，避免通篇「历史上发生了什么」。
+- 合规措辞集中到 price_note_zh（模型推演、自担风险、非投资建议）；正文少用「回放」「复盘」作为主叙事。
 
 硬性要求：
 - 只输出**一个** JSON 对象，禁止 markdown 代码围栏，禁止多余说明文字。
@@ -344,6 +351,37 @@ def _heuristic_price_hints(r: AnalyzeResponse, *, bias: _BIAS, latest: Optional[
     )
 
 
+def _forward_reason_lines(r: AnalyzeResponse, bias: _BIAS) -> list[str]:
+    """偏「后续怎么走」的短句，减少通篇复述已发生信号。"""
+    rel = r.action_focus.primary_pivot.relation if r.action_focus else "none"
+    out: list[str] = []
+    if rel == "inside":
+        out.append(
+            "后续可先跟踪：相对 ZG/ZD 的突破与回抽——上破后能否站稳、下破后能否收回，决定震荡是否升级成方向选择。"
+        )
+    elif rel == "above":
+        out.append(
+            "后续可先跟踪：回踩中枢上沿（ZG）一带能否守住；失守则更易回到区间内再择向（非下单指令）。"
+        )
+    elif rel == "below":
+        out.append(
+            "后续可先跟踪：反抽中枢下沿（ZD）一带能否站回；站不回则偏弱延伸观察延续（非下单指令）。"
+        )
+    else:
+        out.append(
+            "后续可先跟踪：现价与最近参考中枢 ZD/ZG 的相对位置变化，以及未完成笔何时被反向分型确认。"
+        )
+    if bias == "short":
+        out.append(
+            "偏空语境下：重点看上冲是否衰竭、离开段是否延伸或被背驰证据印证，再谈方向定型；避免仅凭已过卖点复读。"
+        )
+    elif bias == "long":
+        out.append(
+            "偏多语境下：重点看下探是否衰竭、离开段是否延伸或被背驰证据印证，再谈方向定型；避免仅凭已过买点复读。"
+        )
+    return out
+
+
 def heuristic_verdict(r: AnalyzeResponse) -> dict[str, Any]:
     buys, sells = r.buy_signals, r.sell_signals
     all_s: list[Signal] = [*buys, *sells]
@@ -352,6 +390,9 @@ def heuristic_verdict(r: AnalyzeResponse) -> dict[str, Any]:
 
     if not all_s:
         reasons.append("当前未输出买卖点：中枢/离开段/背驰证据不足或级别不匹配。")
+        reasons.append(
+            "后续可先跟踪：级别延续时是否走出新的分型—笔—中枢闭环，再讨论可操作语境（不构成投资建议）。"
+        )
         if r.lines_form and r.lines_form.detail_zh:
             reasons.append(f"走势形态：{r.lines_form.primary} — {r.lines_form.detail_zh[:120]}")
         hints = AiVerdictPriceHints(
@@ -360,7 +401,7 @@ def heuristic_verdict(r: AnalyzeResponse) -> dict[str, Any]:
         return {
             "bias": "neutral",
             "confidence": 0.35,
-            "summary_zh": "结构信号不足，偏观望语境。",
+            "summary_zh": "结构信号不足，后续以观望与边界跟踪为主。",
             "reasons_zh": reasons[:8],
             "price_hints": hints,
         }
@@ -378,34 +419,64 @@ def heuristic_verdict(r: AnalyzeResponse) -> dict[str, Any]:
 
     if latest.side == SignalSide.BUY:
         bias: _BIAS = "long"
-        summary = f"最近结构信号偏买侧（{kind_cn}），偏多观察语境。"
-        reasons.append(f"时间上最后一条信号为买点：{latest.time}，价≈{latest.price:.8f}。")
+        summary = (
+            f"偏多观察：后续先看下探/回抽与中枢边界如何演化；最近买点（{kind_cn}）仅作结构锚点。"
+        )
+        reasons.append(
+            f"锚点（已标注）：买侧 {kind_cn}（{latest.time}），价≈{latest.price:.8f}——用于对齐价位，不代表此刻必须入场。"
+        )
     else:
         bias = "short"
-        summary = f"最近结构信号偏卖侧（{kind_cn}），偏空观察语境。"
-        reasons.append(f"时间上最后一条信号为卖点：{latest.time}，价≈{latest.price:.8f}。")
+        summary = (
+            f"偏空观察：后续先看上冲/回抽与中枢边界如何演化；最近卖点（{kind_cn}）仅作结构锚点。"
+        )
+        reasons.append(
+            f"锚点（已标注）：卖侧 {kind_cn}（{latest.time}），价≈{latest.price:.8f}——用于对齐价位，不代表此刻必须离场。"
+        )
+
+    reasons.extend(_forward_reason_lines(r, bias=bias))
 
     rel = r.action_focus.primary_pivot.relation if r.action_focus else "none"
     if rel == "inside":
-        reasons.append("价格落在参考中枢区间内，震荡语境更强。")
+        reasons.append("本级快照：价在最近参考中枢区间内，震荡为主，突破方向待确认。")
     elif rel == "above":
-        reasons.append("价格在参考中枢上方，偏强离开/回踩观察。")
+        reasons.append("本级快照：价在参考中枢上方，偏强离开/回踩测试语境。")
     elif rel == "below":
-        reasons.append("价格在参考中枢下方，偏弱离开/反抽观察。")
+        reasons.append("本级快照：价在参考中枢下方，偏弱离开/反抽测试语境。")
 
     adv = r.advanced_context
     if adv and adv.trend_recursion and adv.trend_recursion.composite:
         comp = adv.trend_recursion.composite
-        reasons.append(f"跨级摘要编码：{comp}。")
+        reasons.append(f"跨级编码：{comp}；解读时优先看各级边界与离开段是否共振，而非单点回放。")
         if comp == "cross_level_divergent":
-            summary = summary.replace("。", "（跨级不一致，宜谨慎）。")
+            summary = summary.replace("。", "（跨级张力大，宜看边界确认）。")
 
-    conf = 0.55 if len(reasons) >= 2 else 0.5
+    active = r.action_focus.active_bi if r.action_focus else None
+    if active and latest:
+        pen_up = active.direction == Direction.UP
+        late_buy = latest.side == SignalSide.BUY
+        if pen_up and not late_buy:
+            reasons.append(
+                "未完成笔向上与更近的卖侧锚点并存：后续重点看这笔是否延伸、或被反向分型终结，以及 ZG/ZD 测试结果。"
+            )
+        if not pen_up and late_buy:
+            reasons.append(
+                "未完成笔向下与更近的买侧锚点并存：后续重点看这笔是否延伸、或被反向分型终结，以及 ZG/ZD 测试结果。"
+            )
+
+    conf = 0.55 if len(reasons) >= 3 else 0.5
     hints = _heuristic_price_hints(r, bias=bias, latest=latest)
+    if hints.note_zh:
+        hints = hints.model_copy(
+            update={
+                "note_zh": hints.note_zh
+                + " 结论侧重「后续关键位与条件」，已过信号仅作锚点。"
+            }
+        )
     return {
         "bias": bias,
         "confidence": conf,
-        "summary_zh": summary,
+        "summary_zh": summary[:120],
         "reasons_zh": reasons[:8],
         "price_hints": hints,
     }

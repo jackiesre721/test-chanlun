@@ -809,7 +809,10 @@
       <div class="card verdict-card">
         <div class="title" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
           <span>当下简要结论</span>
-          <label style="font-weight:700;font-size:11px;cursor:pointer;user-select:none;color:rgba(232,236,246,.82);">
+          <label
+            style="font-weight:700;font-size:11px;cursor:pointer;user-select:none;color:rgba(232,236,246,.82);"
+            title="勾选后：K 线与结构会先出图，再在后台请求智谱摘要（/analyze/verdict 等）；一般仍需约 10～45 秒出全文。若网关未转发这些路径，摘要会失败（可改用 API 在 /analyze 体中传 glm_verdict）。"
+          >
             <input type="checkbox" id="useGlmVerdict" checked style="vertical-align:middle;" /> 智谱 GLM 摘要
           </label>
         </div>
@@ -847,7 +850,7 @@
         <details class="glm-dev">
           <summary>开发者说明（网关 / glm_verdict / 兼容路由）</summary>
           <div class="muted" style="margin-bottom:10px;font-size:11px;line-height:1.55;">
-            勾选摘要时在同一次 <code>POST /analyze</code> 请求体中带 <code>glm_verdict</code>，响应字段 <code>glm_verdict</code> 直接取摘要，<strong>不依赖</strong> <code>/ai/verdict</code> 等独立路径（适合网关只转发 <code>/analyze</code>）。智谱 Claude API 兼容 <code>…/api/anthropic/v1/messages</code>（
+            本页：<strong>先</strong><code>POST /analyze</code> 出图，再<strong>异步</strong><code>POST /analyze/verdict</code>（或 <code>/ai/verdict</code>）拉 GLM 摘要。若网关<strong>只能</strong>转发 <code>/analyze</code>，可在程序里对 <code>/analyze</code> 请求体加 <code>glm_verdict</code>，响应内联 <code>glm_verdict</code>（同步等待模型）。智谱 Claude API 兼容 <code>…/api/anthropic/v1/messages</code>（
             <a href="https://docs.bigmodel.cn/cn/guide/develop/claude/introduction" target="_blank" rel="noopener">说明</a>）。服务端可设 <code>CHANLAN_ZHIPU_API_MODE=openai_compat</code> 走旧版 <code>/chat/completions</code>。
           </div>
         </details>
@@ -876,6 +879,8 @@
     /** 防止 dataZoom → 改 y 轴 → 再次触发 dataZoom 的同步死循环（页面会一直停在「分析中」） */
     let _visibleScaleUpdateDepth = 0;
     let _dataZoomScaleTimer = null;
+    /** 切换品种/周期时取消上一轮未完成的 GLM 摘要请求 */
+    let glmVerdictAbortController = null;
 
     /** 主图元素分色：笔/线段/中枢/分型/信号/背驰 各用不同色相，减少视觉混淆 */
     const CHART_PALETTE = {
@@ -1074,21 +1079,6 @@
       }
     }
 
-    function buildGlmVerdictInlinePayload() {
-      const use = document.getElementById("useGlmVerdict");
-      if (!use || !use.checked) return null;
-      const keyEl = document.getElementById("glmApiKey");
-      const modelEl = document.getElementById("glmModel");
-      const fullEl = document.getElementById("glmFullContext");
-      const keyV = keyEl && keyEl.value.trim();
-      const modelV = modelEl && modelEl.value.trim();
-      return {
-        glm_api_key: keyV || null,
-        glm_model: modelV || null,
-        glm_full_context: fullEl ? !!fullEl.checked : true,
-      };
-    }
-
     function buildVerdictRequestBody(result) {
       const fullEl = document.getElementById("glmFullContext");
       const full = fullEl ? fullEl.checked : true;
@@ -1120,14 +1110,16 @@
         applyGlmVerdict(result.glm_verdict);
         return;
       }
-      glmEl.innerHTML = `<span class="muted">正在请求后端 GLM 摘要…</span>`;
+      glmEl.innerHTML = `<span class="muted">正在异步请求智谱摘要（不阻塞上图）…</span>`;
       try {
         const bodyJson = JSON.stringify(buildVerdictRequestBody(result));
+        const sig = glmVerdictAbortController ? glmVerdictAbortController.signal : undefined;
         const postJson = url =>
           fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: bodyJson,
+            signal: sig,
           });
         const urls = verdictApiUrlsInOrder();
         let res = null;
@@ -1161,6 +1153,7 @@
         }
         applyGlmVerdict(raw);
       } catch (e) {
+        if (e && e.name === "AbortError") return;
         glmEl.innerHTML = `<div class="warn" style="margin-top:10px;">GLM 请求失败：${escHtml(e.message || String(e))}</div>`;
       }
     }
@@ -1306,6 +1299,8 @@
       document.body.classList.add("analyzing");
       document.getElementById("analyzeProgress").setAttribute("aria-busy", "true");
       document.getElementById("loading").style.display = "block";
+      if (glmVerdictAbortController) glmVerdictAbortController.abort();
+      glmVerdictAbortController = new AbortController();
       try {
         const payload = {
           market: "crypto",
@@ -1313,8 +1308,6 @@
           interval: document.getElementById("interval").value,
           limit: ANALYZE_LIMIT,
         };
-        const gInline = buildGlmVerdictInlinePayload();
-        if (gInline) payload.glm_verdict = gInline;
         const res = await fetch(analyzeApiUrl(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1682,7 +1675,7 @@
           },
         ],
         series
-      }, true);
+      }, { notMerge: true, lazyUpdate: true });
       updateVisiblePriceScale();
 
       document.getElementById("warning").textContent = result.warning || "";
@@ -2150,32 +2143,34 @@
       const latest = all.reduce((a, b) => (a.idx >= b.idx ? a : b));
       const kn = kindName[latest.kind] || latest.kind;
       bullets.push(
-        `时间上最近的一条结构信号：${latest.side === "BUY" ? "买" : "卖"}侧 ${kn}（${latest.time || "—"}）。这是已发生位置的回放，不是「此刻应下单」。`
+        `后续可先盯住：价格相对最近中枢边界（ZD/ZG）的突破与回抽如何演化；时间上最近标注点为${latest.side === "BUY" ? "买" : "卖"}侧 ${kn}（${latest.time || "—"}），仅作价位与结构锚点，不代表此刻操作。`
       );
       let headline = "观望（有历史点）";
       let tone = "hold";
       let sub =
-        "图上有历史买卖点，默认先当复盘参照；是否参与由你结合更大级别、资金与止损规则决定。";
+        "图上有历史买卖点标注时，默认把它当作「下一步对照用的参考位」，重点放在边界测试与未完成结构如何延续，而非复述已走完的行情。";
       if (latest.side === "BUY") {
         headline = "偏多观察";
         tone = "bull";
-        sub = "最近一条结构信号在买侧；语境偏「下探或离开后的反弹观察」，不等于叫你现在抄底。";
+        sub =
+          "结构上最近标注在买侧；后续优先看回抽/下探在中枢边界附近是否获得支撑或失效，而不是把已过买点当成「现在就该入场」。";
       } else {
         headline = "偏空观察";
         tone = "bear";
-        sub = "最近一条结构信号在卖侧；语境偏「上冲或离开后的回撤观察」，不等于叫你现在逃顶。";
+        sub =
+          "结构上最近标注在卖侧；后续优先看上冲/回抽在中枢边界附近是否遇阻或失效，而不是把已过卖点当成「现在就该离场」。";
       }
       const af = result.action_focus;
       const rel = af && af.primary_pivot ? af.primary_pivot.relation : null;
-      if (rel === "inside") bullets.push("本级：价在最近参考中枢区间内 → 震荡为主，突破方向未定。");
-      else if (rel === "above") bullets.push("本级：价在最近参考中枢之上 → 偏强区间，留意假上破与回踩。");
-      else if (rel === "below") bullets.push("本级：价在最近参考中枢之下 → 偏弱区间，留意假下破与反抽。");
+      if (rel === "inside") bullets.push("本级：价在最近参考中枢区间内 → 震荡为主；下一步看突破哪一侧并能否站稳。");
+      else if (rel === "above") bullets.push("本级：价在最近参考中枢之上 → 下一步重点看回踩 ZG 一带能否守住。");
+      else if (rel === "below") bullets.push("本级：价在最近参考中枢之下 → 下一步重点看反抽 ZD 一带能否站回。");
 
       const adv = pickAdvancedForVerdict(result);
       if (adv && adv.trend_recursion && adv.trend_recursion.composite) {
         const comp = adv.trend_recursion.composite;
         const lab = RECURSION_COMP_LABEL[comp] || comp;
-        bullets.push(`跨级摘要：${lab}。`);
+        bullets.push(`跨级：${lab}——解读时优先看各级边界与离开段是否共振，少用单边口号定型。`);
         if (comp === "cross_level_divergent") {
           if (tone === "bull") headline = "偏多观察（跨级背离）";
           else if (tone === "bear") headline = "偏空观察（跨级背离）";
@@ -2187,8 +2182,14 @@
       if (active && latest) {
         const penUp = active.direction === "UP";
         const lateBuy = latest.side === "BUY";
-        if (penUp && !lateBuy) bullets.push("未完成笔向上，但时间上更近的是卖点 → 短线张力偏大，避免用单边词草率定型。");
-        if (!penUp && lateBuy) bullets.push("未完成笔向下，但时间上更近的是买点 → 同样属于张力偏大的混合语境。");
+        if (penUp && !lateBuy)
+          bullets.push(
+            "未完成笔向上与更近的卖侧锚点并存：下一步看这笔是否延伸、何时被反向分型终结，以及边界测试结果。"
+          );
+        if (!penUp && lateBuy)
+          bullets.push(
+            "未完成笔向下与更近的买侧锚点并存：下一步看这笔是否延伸、何时被反向分型终结，以及边界测试结果。"
+          );
       }
       return { headline, sub, bullets, tone };
     }
@@ -2443,7 +2444,7 @@
       if (recentSignal) {
         const sideCn = recentSignal.side === "BUY" ? "买" : "卖";
         const kindName = { first: "一类", second: "二类", second_extend: "二类延伸", third: "三类", second_class: "类二", third_class: "类三", td9: "TD9" };
-        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>提醒</b>：最近窗口曾出现<b>${kindName[recentSignal.kind] || recentSignal.kind}${sideCn}</b>候选（${recentSignal.time}），仅为回放，<b>不等于</b>此刻应进场。</div>`;
+        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${kindName[recentSignal.kind] || recentSignal.kind}${sideCn}</b>（${recentSignal.time}），用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>`;
       }
 
       el.innerHTML = `
@@ -2493,7 +2494,7 @@
         const s = actionFocus.recent_signal;
         const sideCn = s.side === "BUY" ? "买" : "卖";
         const kindName = { first: "一类", second: "二类", second_extend: "二类延伸", third: "三类", second_class: "类二", third_class: "类三", td9: "TD9" };
-        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>提醒</b>：最近窗口曾出现<b>${kindName[s.kind] || s.kind}${sideCn}</b>候选（${s.time}），仅为回放，<b>不等于</b>此刻应进场。</div>`;
+        hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${kindName[s.kind] || s.kind}${sideCn}</b>（${s.time}），用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>`;
       }
 
       return `

@@ -104,6 +104,7 @@ def build_action_focus(
             direction=d_latest.direction,
             idx=d_latest.idx,
             ratio=d_latest.ratio,
+            structure_kind=d_latest.structure_kind,
         )
     elif divergences:
         d_fallback = max(divergences, key=lambda d: d.idx)
@@ -112,6 +113,7 @@ def build_action_focus(
             direction=d_fallback.direction,
             idx=d_fallback.idx,
             ratio=d_fallback.ratio,
+            structure_kind=d_fallback.structure_kind,
         )
         recent_bars = max(recent_bars, last_bar_index - d_fallback.idx + 1)
 

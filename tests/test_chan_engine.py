@@ -1,4 +1,4 @@
-from app.core.models import Candle
+from app.core.models import Candle, Direction, SignalSide
 from app.services.chan_engine import (
     build_active_stroke,
     build_divergences,
@@ -7,6 +7,7 @@ from app.services.chan_engine import (
     build_segments,
     build_signals,
     build_strokes,
+    build_t1p_pan_signals,
     find_fractals,
     normalize_candles,
 )
@@ -61,6 +62,31 @@ def test_fractals_and_strokes_are_built_from_alternating_extremes() -> None:
     assert strokes[0].start_idx < strokes[0].end_idx
 
 
+def test_top_fractal_requires_middle_low_strict_highest_among_three() -> None:
+    """62 课标准顶分型：中间 K 低点须高于左右低点，否则不成立。"""
+    candles = [
+        _candle(0, 10.0, 9.0),
+        _candle(1, 12.0, 8.0),
+        _candle(2, 11.0, 9.5),
+    ]
+    assert find_fractals(candles) == []
+
+
+def test_segment_pivot_three_segments_only_when_no_fourth() -> None:
+    """仅三段线段重叠、尚无离开段时也应给出中枢（leave 可为 None）。"""
+    from app.core.models import Direction, Segment
+
+    segments = [
+        Segment(start_bi=0, end_bi=2, start_idx=0, end_idx=5, start_price=10, end_price=20, direction=Direction.UP),
+        Segment(start_bi=2, end_bi=4, start_idx=5, end_idx=10, start_price=18, end_price=12, direction=Direction.DOWN),
+        Segment(start_bi=4, end_bi=6, start_idx=10, end_idx=15, start_price=14, end_price=22, direction=Direction.UP),
+    ]
+    pivots = build_segment_pivots(segments)
+    assert len(pivots) == 1
+    assert pivots[0].leave_seg_idx is None
+    assert pivots[0].start_bi == 0
+
+
 def test_inclusion_keeps_real_high_low_source_indices() -> None:
     candles = [
         _candle(0, 10, 8),
@@ -75,6 +101,7 @@ def test_inclusion_keeps_real_high_low_source_indices() -> None:
     assert normalized[1].high_idx == 1
     assert normalized[1].low == 10
     assert normalized[1].low_idx == 2
+    assert normalized[1].merged_from == [1, 2]
 
 
 def test_too_close_opposite_fractal_replaces_previous_extreme_without_reversing_time() -> None:
@@ -248,9 +275,9 @@ def test_segment_pivot_extends_while_new_segment_overlaps() -> None:
     pivots = build_segment_pivots(segments)
 
     assert len(pivots) == 1
-    assert pivots[0].start_bi == 1
+    assert pivots[0].start_bi == 0
     assert pivots[0].end_bi == 4
-    assert pivots[0].zd == 14
+    assert pivots[0].zd == 16
     assert pivots[0].zg == 17
 
 
@@ -268,9 +295,29 @@ def test_segment_pivot_extension_keeps_initial_price_range() -> None:
 
     pivot = build_segment_pivots(segments)[0]
 
-    assert pivot.zd == 14
+    assert pivot.zd == 16
     assert pivot.zg == 17
+    assert pivot.start_bi == 0
     assert pivot.end_bi == 4
+
+
+def test_divergence_structure_kind_trend_vs_zpan() -> None:
+    from app.core.models import Pivot
+
+    from app.services.chan_engine import _divergence_structure_kind
+
+    p_stack = [
+        Pivot(start_bi=0, end_bi=2, start_idx=0, end_idx=1, zd=10.0, zg=20.0, level="segment"),
+        Pivot(start_bi=3, end_bi=5, start_idx=2, end_idx=3, zd=25.0, zg=35.0, level="segment"),
+    ]
+    assert _divergence_structure_kind(p_stack, 1) == "trend"
+
+    p_overlap = [
+        Pivot(start_bi=0, end_bi=2, start_idx=0, end_idx=1, zd=15.0, zg=28.0, level="segment"),
+        Pivot(start_bi=3, end_bi=5, start_idx=2, end_idx=3, zd=18.0, zg=30.0, level="segment"),
+    ]
+    assert _divergence_structure_kind(p_overlap, 1) == "zpan_like"
+    assert _divergence_structure_kind(p_stack, 0) == "zpan_like"
 
 
 def test_bi_pivot_can_generate_divergence_without_segments() -> None:
@@ -318,6 +365,8 @@ def test_first_buy_signal_requires_leaving_pivot_divergence() -> None:
 
     assert not sell_signals
     assert len(divergences) == 1
+    assert divergences[0].structure_kind == "zpan_like"
+    assert "盘整类背驰" in divergences[0].description
     assert divergences[0].entry_seg_idx == 0
     assert divergences[0].leave_seg_idx == 4
     assert len(buy_signals) == 1
@@ -409,9 +458,13 @@ def test_second_buy_signal_requires_retest_above_first_buy_low() -> None:
     divergences = build_divergences(segments, [pivot], macd)
     buy_signals, _ = build_signals(candles, segments, [pivot], divergences)
 
-    assert [signal.kind for signal in buy_signals] == ["second"]
-    assert buy_signals[0].price == 78
-    assert buy_signals[0].evidence is not None
+    kinds = sorted({signal.kind for signal in buy_signals})
+    assert "second" in kinds
+    assert "first" in kinds
+    second_buys = [s for s in buy_signals if s.kind == "second"]
+    assert len(second_buys) == 1
+    assert second_buys[0].price == 78
+    assert second_buys[0].evidence is not None
 
 
 def test_third_buy_signal_requires_pullback_above_pivot() -> None:
@@ -437,6 +490,33 @@ def test_third_buy_signal_requires_pullback_above_pivot() -> None:
 
     assert [signal.kind for signal in sell_signals] == ["first"]
     assert [signal.kind for signal in buy_signals] == ["third"]
+
+
+def test_shallow_leave_standalone_third_emits_third_class_buy() -> None:
+    from app.core.models import Direction, Pivot, Segment
+
+    candles = [_candle(idx, 90 + idx, 80 + idx) for idx in range(50)]
+    segments = [
+        Segment(start_bi=0, end_bi=2, start_idx=0, end_idx=5, start_price=80, end_price=92, direction=Direction.UP),
+        Segment(start_bi=2, end_bi=4, start_idx=5, end_idx=10, start_price=92, end_price=85, direction=Direction.DOWN),
+        Segment(start_bi=4, end_bi=6, start_idx=10, end_idx=15, start_price=85, end_price=93, direction=Direction.UP),
+        Segment(start_bi=6, end_bi=8, start_idx=15, end_idx=20, start_price=93, end_price=86, direction=Direction.DOWN),
+        Segment(start_bi=8, end_bi=10, start_idx=20, end_idx=25, start_price=86, end_price=93.5, direction=Direction.UP),
+        Segment(start_bi=10, end_bi=12, start_idx=25, end_idx=30, start_price=93.5, end_price=93.4, direction=Direction.DOWN),
+        Segment(start_bi=12, end_bi=14, start_idx=30, end_idx=35, start_price=93.4, end_price=94, direction=Direction.UP),
+    ]
+    pivot = Pivot(start_bi=1, end_bi=3, start_idx=5, end_idx=20, zd=85, zg=93)
+    macd = _flat_macd(50, 1.0)
+    for idx in range(0, 6):
+        macd[idx].hist = 10
+
+    divergences = build_divergences(segments, [pivot], macd)
+    buy_signals, _ = build_signals(candles, segments, [pivot], divergences)
+
+    kinds = {s.kind for s in buy_signals}
+    assert "third_class" in kinds
+    shallow = [s for s in buy_signals if s.kind == "third_class" and s.evidence and "中枢#0" in s.evidence]
+    assert len(shallow) >= 1
 
 
 def test_active_stroke_tracks_unconfirmed_move_after_last_confirmed_bi() -> None:
@@ -476,7 +556,8 @@ def test_active_stroke_ignores_tiny_noise_move() -> None:
     assert build_active_stroke(candles, strokes) is None
 
 
-def test_active_stroke_uses_extreme_source_index_from_normalized_candle() -> None:
+def test_active_stroke_uses_norm_index_and_candle_high_for_extreme() -> None:
+    """未完成笔的端点须落在合并 K 线数组下标上（与 kline_data 对齐）；极值取自 high/low，与 high_idx 源编号无关。"""
     from app.core.models import Direction, Stroke
 
     normalized_candles = [
@@ -497,7 +578,7 @@ def test_active_stroke_uses_extreme_source_index_from_normalized_candle() -> Non
     strokes = [
         Stroke(
             start_idx=0,
-            end_idx=2,
+            end_idx=0,
             norm_start_idx=0,
             norm_end_idx=0,
             start_price=12,
@@ -509,7 +590,28 @@ def test_active_stroke_uses_extreme_source_index_from_normalized_candle() -> Non
     active = build_active_stroke(normalized_candles, strokes)
 
     assert active is not None
-    assert active.start_idx == 2
-    assert active.end_idx == 3
+    assert active.start_idx == 0
+    assert active.end_idx == 1
     assert active.norm_end_idx == 1
     assert active.end_price == 14
+
+
+def test_t1p_buy_without_bi_zhongshu() -> None:
+    from app.core.models import Stroke
+
+    strokes = [
+        Stroke(start_idx=0, end_idx=5, start_price=100, end_price=70, direction=Direction.DOWN),
+        Stroke(start_idx=5, end_idx=8, start_price=70, end_price=85, direction=Direction.UP),
+        Stroke(start_idx=8, end_idx=12, start_price=85, end_price=73, direction=Direction.DOWN),
+    ]
+    macd = _flat_macd(25, 1.0)
+    for i in range(0, 6):
+        macd[i].hist = 10.0
+    for i in range(8, 13):
+        macd[i].hist = 1.0
+    candles = [_candle(i, 100 - i * 0.5, 90 - i * 0.5) for i in range(25)]
+    buy, sell = build_t1p_pan_signals(candles, strokes, macd)
+    assert sell == []
+    assert len(buy) == 1
+    assert buy[0].side == SignalSide.BUY
+    assert "T1P" in buy[0].description

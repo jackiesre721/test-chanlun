@@ -32,11 +32,28 @@ export function SignalCard({ signal, onNavigate }: { signal: any; onNavigate?: (
             <span className="text-[10px] text-text-muted">{fmtOpenTime(signal.open_time)}</span>
           )}
         </div>
-        {signal.stop_loss != null && signal.take_profit != null && (
-          <div className={`mt-1 text-[10px] flex items-center gap-3 num ${rrClass(signal.risk_reward_ratio)}`}>
-            <span>SL {Number(signal.stop_loss).toFixed(2)}</span>
-            <span>TP {Number(signal.take_profit).toFixed(2)}</span>
-            {signal.risk_reward_ratio != null && <span className="font-bold">R:R {signal.risk_reward_ratio.toFixed(1)}</span>}
+        {(signal.stop_loss != null ||
+          signal.stop_loss_2 != null ||
+          signal.take_profit_1 != null ||
+          signal.take_profit != null) && (
+          <div
+            className={`mt-1 text-[10px] flex flex-wrap gap-x-3 gap-y-0.5 num ${rrClass(signal.risk_reward_ratio)}`}
+          >
+            {signal.stop_loss != null && (
+              <span className="text-warning">SL {Number(signal.stop_loss).toFixed(2)}</span>
+            )}
+            {signal.stop_loss_2 != null && (
+              <span className="text-warning/90">SL₂ {Number(signal.stop_loss_2).toFixed(2)}</span>
+            )}
+            {signal.take_profit_1 != null && (
+              <span className="text-success">TP1 {Number(signal.take_profit_1).toFixed(2)}</span>
+            )}
+            {signal.take_profit != null && (
+              <span className="text-success">TP2 {Number(signal.take_profit).toFixed(2)}</span>
+            )}
+            {signal.risk_reward_ratio != null && (
+              <span className="font-bold">R:R {signal.risk_reward_ratio.toFixed(1)}</span>
+            )}
           </div>
         )}
       </div>

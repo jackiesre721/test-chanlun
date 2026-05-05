@@ -24,7 +24,7 @@ class SignalSide(str, Enum):
 
 
 # App-internal interval codes → Binance mapping lives in BinanceRepository.
-ALLOWED_ANALYSIS_INTERVALS = frozenset({"1", "15", "30", "60", "240", "1440"})
+ALLOWED_ANALYSIS_INTERVALS = frozenset({"1", "5", "15", "30", "60", "240", "1440", "10080", "43200"})
 
 
 def normalize_supported_symbol(value: str) -> str:
@@ -164,6 +164,7 @@ class BollingerPoint(BaseModel):
 class Signal(BaseModel):
     side: SignalSide
     kind: Literal["first", "second", "second_extend", "third", "second_class", "third_class", "td9"]
+    level: Literal["bi", "segment", "higher_bi"] = "bi"
     idx: int
     time: str
     price: float
@@ -176,8 +177,10 @@ class Signal(BaseModel):
     macd_ratio: Optional[float] = None
     evidence: Optional[str] = None
     stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    risk_reward_ratio: Optional[float] = None
+    stop_loss_2: Optional[float] = None  # secondary stop (bi-level for segment signals)
+    take_profit: Optional[float] = None  # TP2: 2:1 RR
+    take_profit_1: Optional[float] = None  # TP1: 1:1 RR
+    rr_filtered: bool = False  # True = signal didn't pass RR/trend/segment-first filter
 
 
 class TdSummary(BaseModel):
@@ -220,8 +223,14 @@ class ActionFocusRecentDivergence(BaseModel):
 class ActionFocusRecentSignal(BaseModel):
     side: SignalSide
     kind: Literal["first", "second", "second_extend", "third", "second_class", "third_class", "td9"]
+    level: Literal["bi", "segment", "higher_bi"] = "bi"
     idx: int = Field(ge=0)
     time: str
+    price: float = 0.0
+    stop_loss: Optional[float] = None
+    stop_loss_2: Optional[float] = None
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
 
 
 class LinesFormSummary(BaseModel):
@@ -428,6 +437,8 @@ class AnalyzeResponse(BaseModel):
     zhongshus_lv2: list[Pivot]
     buy_signals: list[Signal]
     sell_signals: list[Signal]
+    buy_signals_filtered: list[Signal] = Field(default_factory=list)
+    sell_signals_filtered: list[Signal] = Field(default_factory=list)
     td_summary: TdSummary
     action_focus: ActionFocus
     warning: Optional[str] = None
@@ -494,14 +505,14 @@ class CompactOHLC(BaseModel):
 
 
 class PositionSizingRequest(BaseModel):
-    """给定单笔风险比例与止损价，估算头寸规模（支持 USDT 永续合约）。"""
+    """给定单笔风险比例与止损价，估算名义头寸规模（现货口径简化模型）。"""
 
     equity_usdt: float = Field(gt=0)
     risk_fraction: float = Field(gt=0, le=0.2)
     entry_price: float = Field(gt=0)
     stop_price: float = Field(gt=0)
-    leverage: int = Field(default=1, ge=1, le=125)
-    maint_margin_rate: float = Field(default=0.004, gt=0, le=0.5)
+    leverage: int = Field(default=1, ge=1, le=100)
+    maint_margin_rate: float = Field(default=0.004, ge=0, le=0.05)
 
     @model_validator(mode="after")
     def stop_must_differ(self) -> "PositionSizingRequest":
@@ -515,9 +526,9 @@ class PositionSizingResponse(BaseModel):
     suggested_quantity: float
     notional_usdt: float
     leverage: int = 1
-    required_margin: Optional[float] = None
+    required_margin: float = 0.0
     liquidation_price: Optional[float] = None
-    effective_risk_pct: Optional[float] = None
+    effective_risk_pct: float = 0.0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -548,10 +559,13 @@ class QuickBacktestRequest(BaseModel):
     market: Market = Market.CRYPTO
     symbol: str = "BTCUSDT"
     interval: str = "240"
-    max_bars: int = Field(default=8000, ge=500, le=50000)
+    start_time_ms: Optional[int] = None
+    end_time_ms: Optional[int] = None
     strategy: Literal["long_only_flip", "long_short_flip"] = "long_only_flip"
     initial_equity_usdt: float = Field(default=10_000.0, gt=0)
+    leverage: int = Field(default=1, ge=1, le=100)
     fee_bps: float = Field(default=10.0, ge=0)
+    trade_amount_usdt: Optional[float] = Field(default=None, gt=0)
 
     @field_validator("symbol")
     @classmethod
@@ -572,6 +586,11 @@ class QuickBacktestTrade(BaseModel):
     action: Literal["BUY", "SELL"]
     price: float
     equity_after: float
+    exit_reason: str = "signal"
+    quantity: float = 0.0
+    stop_loss: Optional[float] = None
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
 
 
 class QuickBacktestRoundTrip(BaseModel):
@@ -612,6 +631,7 @@ class QuickBacktestMetrics(BaseModel):
     max_consecutive_losses: int = 0
     avg_win_usdt: Optional[float] = None
     avg_loss_usdt: Optional[float] = None
+    stop_loss_hits: int = 0
 
 
 class QuickBacktestResponse(BaseModel):

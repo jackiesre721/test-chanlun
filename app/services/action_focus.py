@@ -125,6 +125,11 @@ def build_action_focus(
             kind=s_latest.kind,
             idx=s_latest.idx,
             time=s_latest.time,
+            price=s_latest.price,
+            stop_loss=s_latest.stop_loss,
+            stop_loss_2=s_latest.stop_loss_2,
+            take_profit_1=s_latest.take_profit_1,
+            take_profit_2=s_latest.take_profit,
         )
     else:
         merged = buy_signals + sell_signals
@@ -135,6 +140,11 @@ def build_action_focus(
                 kind=s_fallback.kind,
                 idx=s_fallback.idx,
                 time=s_fallback.time,
+                price=s_fallback.price,
+                stop_loss=s_fallback.stop_loss,
+                stop_loss_2=s_fallback.stop_loss_2,
+                take_profit_1=s_fallback.take_profit_1,
+                take_profit_2=s_fallback.take_profit,
             )
             recent_bars = max(recent_bars, last_bar_index - s_fallback.idx + 1)
 

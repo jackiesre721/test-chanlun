@@ -16,7 +16,7 @@ export function GlmConfigCard() {
     <Disclosure>
       <Card className="bg-bg-card border border-accent/20">
         <DisclosureTrigger>
-          <div className="font-bold text-sm px-3 py-2 cursor-pointer hover:text-accent transition-colors">
+          <div className="section-label cursor-pointer hover:text-accent transition-colors" style={{ padding: "10px 12px 8px" }}>
             GLM 配置（智谱 · 点击展开）
           </div>
         </DisclosureTrigger>

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Card, CardHeader, CardContent, Checkbox, Chip } from "@heroui/react";
+import { Card, CardContent, Checkbox, Chip } from "@heroui/react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useGlmStore } from "@/stores/glm-store";
 import { ANALYZE_LIMIT } from "@/constants/chart-palette";
@@ -53,7 +53,7 @@ export function VerdictCard() {
   if (!lastResult && !error) {
     return (
       <Card className="bg-bg-card border border-border-subtle">
-        <CardHeader className="font-bold text-sm px-3 py-2">当下简要结论</CardHeader>
+        <div className="section-label">当下结论</div>
         <CardContent className="px-3 pb-3 text-xs text-text-muted">
           分析后将展示偏多/偏空/观望结论、要点与 AI 摘要。
         </CardContent>
@@ -64,7 +64,7 @@ export function VerdictCard() {
   if (error) {
     return (
       <Card className="bg-bg-card border border-border-subtle">
-        <CardHeader className="font-bold text-sm px-3 py-2">当下简要结论</CardHeader>
+        <div className="section-label">当下结论</div>
         <CardContent className="px-3 pb-3">
           <span className="text-negative text-xs">{error}</span>
           <div className="text-[11px] text-text-muted mt-2 leading-relaxed">
@@ -78,14 +78,14 @@ export function VerdictCard() {
   const v = computeVerdict(lastResult!);
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2 flex items-center justify-between">
-        <span>当下简要结论</span>
+    <Card className={`card-verdict ${lastResult ? "animate-slide-up" : ""}`} data-tone={v.tone}>
+      <div className="section-label flex items-center justify-between" style={{ padding: "2px 0 6px" }}>
+        <span>当下结论</span>
         <Checkbox size="sm" aria-label="启用智谱 GLM 摘要" isSelected={useGlm} onChange={() => setUseGlm(!useGlm)}>
-          智谱 GLM 摘要
+          <span className="text-[10px]">GLM</span>
         </Checkbox>
-      </CardHeader>
-      <CardContent className="px-3 pb-3">
+      </div>
+      <CardContent className="px-0 pb-0 pt-0">
         <div className="flex items-center gap-2 mb-2">
           <Chip color={v.chipColor} size="sm" variant="flat">{v.headline}</Chip>
         </div>
@@ -94,7 +94,7 @@ export function VerdictCard() {
         ))}
         {loading && <div className="text-xs text-text-muted mt-2 animate-pulse">GLM 摘要加载中…</div>}
         {verdict?.raw && (
-          <div className="mt-2 p-2 rounded-lg bg-accent/5 border border-accent/10 text-xs text-text-primary/70 whitespace-pre-wrap">
+          <div className="mt-2 p-2.5 rounded-lg bg-surface-accent border border-border-subtle text-xs text-text-primary/80 whitespace-pre-wrap leading-relaxed">
             {verdict.raw}
           </div>
         )}

@@ -1,4 +1,4 @@
-import { Card, CardHeader, CardContent, Chip } from "@heroui/react";
+import { Card, CardContent, Chip } from "@heroui/react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useRiskStore } from "@/stores/risk-store";
 import { fmtOpenTime } from "@/lib/format";
@@ -17,45 +17,43 @@ export function SignalCard({ signal, onNavigate }: { signal: any; onNavigate?: (
 
   return (
     <div
-      className="p-2.5 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] cursor-pointer transition-colors border border-transparent hover:border-border-subtle"
+      className="signal-row group"
       onClick={() => onNavigate?.(signal.idx)}
     >
-      <div className="flex items-center gap-2 mb-1">
-        <Chip size="sm" variant="flat" color={isBuy ? "success" : "danger"}>
-          {signal.side}
-        </Chip>
-        <span className="text-[11px] text-text-muted">
-          {KIND_NAME[signal.kind] || signal.kind}
-        </span>
-        <span className="text-xs font-mono ml-auto">{Number(signal.price).toFixed(2)}</span>
-      </div>
-      {signal.open_time && (
-        <div className="text-[10px] text-text-muted mb-1">{fmtOpenTime(signal.open_time)}</div>
-      )}
-      {signal.description && (
-        <div className="text-[11px] text-text-primary/70 mb-1">{signal.description}</div>
-      )}
-      {signal.evidence && (
-        <div className="text-[10px] text-text-muted mb-1">{signal.evidence}</div>
-      )}
-      {signal.stop_loss != null && signal.take_profit != null && (
-        <div className={`mt-1.5 p-1.5 rounded bg-white/[0.03] text-[11px] flex items-center gap-3 ${rrClass(signal.risk_reward_ratio)}`}>
-          <span>SL: {Number(signal.stop_loss).toFixed(2)}</span>
-          <span>TP: {Number(signal.take_profit).toFixed(2)}</span>
-          {signal.risk_reward_ratio != null && <span className="font-bold">R:R {signal.risk_reward_ratio.toFixed(1)}</span>}
+      <Chip size="sm" variant="flat" color={isBuy ? "success" : "danger"} className="shrink-0">
+        {signal.side}
+      </Chip>
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-text-primary/90 font-medium truncate">
+            {KIND_NAME[signal.kind] || signal.kind}
+          </span>
+          {signal.open_time && (
+            <span className="text-[10px] text-text-muted">{fmtOpenTime(signal.open_time)}</span>
+          )}
         </div>
-      )}
-      {signal.stop_loss != null && (
-        <button
-          className="mt-1.5 text-[10px] px-2 py-0.5 rounded bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            fillRisk(signal.price, signal.stop_loss);
-          }}
-        >
-          填入风控试算
-        </button>
-      )}
+        {signal.stop_loss != null && signal.take_profit != null && (
+          <div className={`mt-1 text-[10px] flex items-center gap-3 num ${rrClass(signal.risk_reward_ratio)}`}>
+            <span>SL {Number(signal.stop_loss).toFixed(2)}</span>
+            <span>TP {Number(signal.take_profit).toFixed(2)}</span>
+            {signal.risk_reward_ratio != null && <span className="font-bold">R:R {signal.risk_reward_ratio.toFixed(1)}</span>}
+          </div>
+        )}
+      </div>
+      <div className="text-right shrink-0">
+        <div className="text-xs font-mono font-medium num">{Number(signal.price).toFixed(2)}</div>
+        {signal.stop_loss != null && (
+          <button
+            className="text-[9px] mt-0.5 px-1.5 py-px rounded bg-surface-accent text-accent hover:bg-surface-active transition-colors opacity-0 group-hover:opacity-100"
+            onClick={(e) => {
+              e.stopPropagation();
+              fillRisk(signal.price, signal.stop_loss);
+            }}
+          >
+            风控
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -73,8 +71,8 @@ export function SignalsCard() {
   };
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2">买卖点信号</CardHeader>
+    <Card className="card-glow bg-bg-card border border-border-subtle">
+      <div className="section-label">买卖点信号</div>
       <CardContent className="px-3 pb-3">
         {error ? (
           <span className="text-xs text-negative">暂无信号</span>
@@ -83,8 +81,8 @@ export function SignalsCard() {
         ) : allSignals.length === 0 ? (
           <span className="text-xs text-text-muted">当前列表为空：多为结构不足以程序判定买卖点。</span>
         ) : (
-          <div className="space-y-2">
-            <div className="text-[10px] text-text-muted">默认展示最近信号，点击可导航到图表。</div>
+          <div className="space-y-1.5">
+            <div className="text-[10px] text-text-muted mb-1">点击信号可导航到图表对应位置</div>
             {allSignals.slice(0, 4).map((s, i) => (
               <SignalCard key={i} signal={s} onNavigate={handleNavigate} />
             ))}

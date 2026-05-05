@@ -9,11 +9,11 @@ export function AdvancedStructureCard() {
 
   return (
     <Disclosure>
-      <Card className="bg-bg-card border border-border-subtle">
+      <Card className="card-glow bg-bg-card border border-border-subtle">
         <DisclosureTrigger>
-          <div className="font-bold text-sm px-3 py-2 cursor-pointer hover:text-accent transition-colors flex items-center gap-2">
+          <div className="section-label cursor-pointer hover:text-accent transition-colors flex items-center gap-2" style={{ padding: "10px 12px 8px" }}>
             进阶结构
-            <span className="text-[11px] text-text-muted font-normal">（表格较长，默认折叠）</span>
+            <span className="text-[9px] text-text-muted font-normal normal-case tracking-normal">（表格较长，默认折叠）</span>
           </div>
         </DisclosureTrigger>
         <DisclosureContent>

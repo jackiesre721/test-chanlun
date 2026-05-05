@@ -9,7 +9,7 @@ export function Toolbar() {
   const analyzing = useAnalysisStore((s) => s.analyzing);
 
   return (
-    <div className={`bg-bg-toolbar border-b border-border-subtle ${analyzing ? "analyzing" : ""}`}>
+    <div className={`toolbar-bar ${analyzing ? "analyzing" : ""}`}>
       <ToolbarPrimary />
       {!compact && (
         <>

@@ -1,4 +1,4 @@
-import { Card, CardHeader, CardContent } from "@heroui/react";
+import { Card, CardContent } from "@heroui/react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import type { AnalyzeResult } from "@/types/analysis";
 
@@ -102,8 +102,8 @@ export function ActionFocusCard() {
   const lines = lastResult ? buildFocusHtml(lastResult) : null;
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2">当下关注点（可操作语境）</CardHeader>
+    <Card className="card-glow bg-bg-card border border-border-subtle">
+      <div className="section-label">当下关注点（可操作语境）</div>
       <CardContent className="px-3 pb-3 text-xs text-text-muted">
         {error ? (
           <span className="text-negative">{error}</span>

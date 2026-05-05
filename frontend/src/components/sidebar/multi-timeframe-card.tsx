@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardHeader, CardContent, Button, Chip } from "@heroui/react";
+import { Card, CardContent, Button, Chip } from "@heroui/react";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { postMultiAnalyze } from "@/lib/api";
@@ -48,8 +48,8 @@ export function MultiTimeframeCard() {
   };
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2">多周期摘要</CardHeader>
+    <Card className="card-glow bg-bg-card border border-border-subtle">
+      <div className="section-label">多周期摘要</div>
       <CardContent className="px-3 pb-3 text-xs text-text-muted">
         <p className="text-[11px] leading-relaxed mb-2">
           并行请求多个周期。「主图打开」将切换周期并重新分析。
@@ -65,7 +65,7 @@ export function MultiTimeframeCard() {
               if (!r) return null;
               const v = briefVerdict(r);
               return (
-                <div key={iv} className="flex items-center gap-2 p-1.5 rounded bg-white/[0.03]">
+                <div key={iv} className="flex items-center gap-2 p-1.5 rounded bg-surface-hover">
                   <span className="font-mono w-8">{intervalLabel(iv)}</span>
                   <Chip size="sm" variant="flat" color={v.color}>{v.text}</Chip>
                   <span className="text-[10px]">笔{r.bis?.length || 0} 段{r.segments?.length || 0}</span>

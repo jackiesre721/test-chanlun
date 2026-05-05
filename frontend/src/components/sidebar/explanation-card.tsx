@@ -1,4 +1,4 @@
-import { Card, CardHeader, CardContent } from "@heroui/react";
+import { Card, CardContent } from "@heroui/react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { ANALYZE_LIMIT } from "@/constants/chart-palette";
 
@@ -6,8 +6,8 @@ export function ExplanationCard() {
   const lastResult = useAnalysisStore((s) => s.lastResult);
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2">说明</CardHeader>
+    <Card className="card-glow bg-bg-card border border-border-subtle">
+      <div className="section-label">说明</div>
       <CardContent className="px-3 pb-3 text-xs text-text-muted">
         <div>分析链路：分型 → 笔 → 线段 → 中枢 → 背驰 → 买卖点。结构不足或无离开段背驰证据时不强行给点。</div>
         {lastResult && (

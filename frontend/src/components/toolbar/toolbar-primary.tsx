@@ -29,12 +29,17 @@ export function ToolbarPrimary() {
   const handleAnalyze = () => analyze(symbol, interval);
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 flex-wrap">
+    <div className="toolbar-bar flex items-center gap-3 px-4 py-2.5 flex-wrap">
       {/* Brand */}
-      <div className="flex items-center gap-2 mr-2">
-        <span className="text-base font-bold text-text-primary tracking-wide">Chanlan</span>
-        <span className="text-xs text-text-muted">缠论</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/20 text-accent font-semibold">结构终端</span>
+      <div className="flex items-center gap-2.5 mr-3">
+        <svg className="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 7c3 0 3 10 6 10s3-10 6-10 3 10 6 10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M4 17c3 0 3-10 6-10s3 10 6 10 3-10 6-10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity="0.3"/>
+        </svg>
+        <div className="flex flex-col leading-none">
+          <span className="text-[15px] font-semibold tracking-tight text-text-primary">Chanlan</span>
+          <span className="text-[9px] font-medium tracking-widest uppercase text-text-muted mt-px">缠论 · 结构终端</span>
+        </div>
       </div>
 
       {/* Symbol select */}
@@ -107,8 +112,9 @@ export function ToolbarPrimary() {
       <div className="flex-1" />
 
       {/* Status */}
-      <div className="text-[11px] text-text-muted hidden lg:block">
-        严格结构：<b className="text-text-primary">无证据不出点</b>
+      <div className="hidden lg:flex items-center gap-2 text-[10px] font-mono tracking-wider text-text-muted uppercase">
+        <span className="status-dot"></span>
+        严格结构 · 无证据不出点
       </div>
     </div>
   );

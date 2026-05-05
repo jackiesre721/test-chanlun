@@ -37,10 +37,10 @@ export function PaperTradingCard() {
   useEffect(() => { loadRecent(); }, []);
 
   return (
-    <Disclosure>
-      <Card className="bg-bg-card border border-border-subtle">
+    <Disclosure defaultOpen={false}>
+      <Card className="card-glow bg-bg-card border border-border-subtle">
         <DisclosureTrigger>
-          <div className="font-bold text-sm px-3 py-2 cursor-pointer hover:text-accent transition-colors">
+          <div className="section-label cursor-pointer hover:text-accent transition-colors" style={{ padding: "10px 12px 8px" }}>
             纸盘记账（本地）
           </div>
         </DisclosureTrigger>

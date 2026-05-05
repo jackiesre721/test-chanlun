@@ -1,4 +1,4 @@
-import { Card, CardHeader, CardContent } from "@heroui/react";
+import { Card, CardContent } from "@heroui/react";
 import { useAnalysisStore } from "@/stores/analysis-store";
 
 export function StructureStatusCard() {
@@ -7,8 +7,8 @@ export function StructureStatusCard() {
 
   if (!lastResult && !error) {
     return (
-      <Card className="bg-bg-card border border-border-subtle">
-        <CardHeader className="font-bold text-sm px-3 py-2">结构状态</CardHeader>
+      <Card className="card-glow bg-bg-card border border-border-subtle">
+        <div className="section-label">结构状态</div>
         <CardContent className="px-3 pb-3 text-xs text-text-muted">
           分析后显示笔/线段/中枢/背驰统计与走势形态。
         </CardContent>
@@ -18,8 +18,8 @@ export function StructureStatusCard() {
 
   if (error) {
     return (
-      <Card className="bg-bg-card border border-border-subtle">
-        <CardHeader className="font-bold text-sm px-3 py-2">结构状态</CardHeader>
+      <Card className="card-glow bg-bg-card border border-border-subtle">
+        <div className="section-label">结构状态</div>
         <CardContent className="px-3 pb-3"><span className="text-xs text-negative">{error}</span></CardContent>
       </Card>
     );
@@ -43,9 +43,9 @@ export function StructureStatusCard() {
   ];
 
   return (
-    <Card className="bg-bg-card border border-border-subtle">
-      <CardHeader className="font-bold text-sm px-3 py-2">结构状态</CardHeader>
-      <CardContent className="px-3 pb-3 text-xs space-y-0.5">
+    <Card className="card-glow bg-bg-card border border-border-subtle">
+      <div className="section-label">结构状态</div>
+      <CardContent className="px-3 pb-3 text-xs text-text-muted">
         {stats.map(([line], i) => (
           <div key={i} dangerouslySetInnerHTML={{ __html: line.replace(/：(.+)/, "：<b>$1</b>") }} />
         ))}

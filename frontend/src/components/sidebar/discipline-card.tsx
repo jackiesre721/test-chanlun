@@ -17,9 +17,9 @@ export function DisciplineCard() {
 
   return (
     <Disclosure>
-      <Card className="bg-bg-card border border-border-subtle">
+      <Card className="card-glow bg-bg-card border border-border-subtle">
         <DisclosureTrigger>
-          <div className="font-bold text-sm px-3 py-2 cursor-pointer hover:text-accent transition-colors">
+          <div className="section-label cursor-pointer hover:text-accent transition-colors" style={{ padding: "10px 12px 8px" }}>
             交易纪律 · 生存与验证
           </div>
         </DisclosureTrigger>
@@ -58,14 +58,14 @@ export function DisciplineCard() {
 
             {/* Rule snapshot */}
             {ruleSnapshot && (
-              <div className="p-2.5 rounded-lg bg-accent/5 border border-accent/15 text-[11px]">
+              <div className="p-2.5 rounded-lg bg-surface-accent border border-accent/15 text-[11px]">
                 <div>规则版本：{ruleSnapshot.rules_version}</div>
                 <div>线段引擎：{ruleSnapshot.segment_engine}</div>
               </div>
             )}
 
             {/* Circuit breaker */}
-            <div className="p-2.5 rounded-lg bg-white/[0.02] border border-border-subtle">
+            <div className="p-2.5 rounded-lg bg-surface-hover border border-border-subtle">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[11px]">连续不利 · 自检计数</span>
                 <span className="text-text-muted">当前</span>

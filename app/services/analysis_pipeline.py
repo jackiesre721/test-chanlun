@@ -10,6 +10,7 @@ from app.core.models import AnalyzeResponse, Candle, Market, Pivot, Signal, Stro
 from app.services.action_focus import build_action_focus
 from app.services.analysis_cache import display_macd_for_analysis
 from app.services.chan_advanced import build_chan_advanced_context
+from app.services.risk_controls import enrich_signals_with_sl_tp
 from app.services.chan_engine import (
     build_active_stroke,
     build_divergences,
@@ -145,6 +146,8 @@ def build_analyze_bundle_from_normalized(
     )
     all_buy = sorted(bi_buy_signals + segment_buy_signals + t1p_buy, key=lambda s: s.idx)
     all_sell = sorted(bi_sell_signals + segment_sell_signals + t1p_sell, key=lambda s: s.idx)
+    all_buy = enrich_signals_with_sl_tp(all_buy, fractals, pivots)
+    all_sell = enrich_signals_with_sl_tp(all_sell, fractals, pivots)
     buy_signals = all_buy[-12:]
     sell_signals = all_sell[-12:]
 

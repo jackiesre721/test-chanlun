@@ -9,6 +9,21 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^6.0.3",
     "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "@heroui/react": "^3.0.3",
+    "echarts": "^5.6.0",
+    "echarts-for-react": "^3.0.6",
+    "framer-motion": "^12.38.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "zustand": "^5.0.13"
   }
 }

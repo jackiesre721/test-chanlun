@@ -175,6 +175,9 @@ class Signal(BaseModel):
     leave_seg_idx: Optional[int] = None
     macd_ratio: Optional[float] = None
     evidence: Optional[str] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    risk_reward_ratio: Optional[float] = None
 
 
 class TdSummary(BaseModel):
@@ -491,12 +494,14 @@ class CompactOHLC(BaseModel):
 
 
 class PositionSizingRequest(BaseModel):
-    """给定单笔风险比例与止损价，估算名义头寸规模（现货口径简化模型）。"""
+    """给定单笔风险比例与止损价，估算头寸规模（支持 USDT 永续合约）。"""
 
     equity_usdt: float = Field(gt=0)
     risk_fraction: float = Field(gt=0, le=0.2)
     entry_price: float = Field(gt=0)
     stop_price: float = Field(gt=0)
+    leverage: int = Field(default=1, ge=1, le=125)
+    maint_margin_rate: float = Field(default=0.004, gt=0, le=0.5)
 
     @model_validator(mode="after")
     def stop_must_differ(self) -> "PositionSizingRequest":
@@ -509,6 +514,11 @@ class PositionSizingResponse(BaseModel):
     risk_usdt: float
     suggested_quantity: float
     notional_usdt: float
+    leverage: int = 1
+    required_margin: Optional[float] = None
+    liquidation_price: Optional[float] = None
+    effective_risk_pct: Optional[float] = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class TrailingStopRequest(BaseModel):

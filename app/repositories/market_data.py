@@ -20,28 +20,34 @@ log = logging.getLogger(__name__)
 
 BINANCE_INTERVALS = {
     "1": "1m",
+    "5": "5m",
     "15": "15m",
     "30": "30m",
     "60": "1h",
     "240": "4h",
     "1440": "1d",
+    "10080": "1w",
+    "43200": "1M",
 }
 
 # Internal interval code -> candle width in milliseconds
 _INTERVAL_MS = {
     "1": 60_000,
+    "5": 300_000,
     "15": 900_000,
     "30": 1_800_000,
     "60": 3_600_000,
     "240": 14_400_000,
     "1440": 86_400_000,
+    "10080": 604_800_000,
+    "43200": 2_592_000_000,
 }
 
-BINANCE_BASE_URLS = (
-    "https://api.binance.com",
-    "https://api1.binance.com",
-    "https://api2.binance.com",
-    "https://api3.binance.com",
+BINANCE_FUTURES_BASE_URLS = (
+    "https://fapi.binance.com",
+    "https://fapi1.binance.com",
+    "https://fapi2.binance.com",
+    "https://fapi3.binance.com",
 )
 
 
@@ -50,7 +56,7 @@ class BinanceRepository:
 
     def __init__(
         self,
-        base_url: str = settings.binance_base_url,
+        base_url: str = settings.binance_futures_base_url,
         pg_session_factory: Any = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -106,8 +112,44 @@ class BinanceRepository:
 
         return merged
 
+    async def get_klines_history_from_time(
+        self, symbol: str, interval: str, start_time_ms: int
+    ) -> list[Candle]:
+        """Fetch klines from *start_time_ms* up to now, paginating forward."""
+        binance_interval = BINANCE_INTERVALS[interval]
+        width_ms = _INTERVAL_MS.get(interval, 60_000)
+        max_bars = settings.backtest_max_bars
+        merged: list[Candle] = []
+        cursor = int(start_time_ms)
+
+        while len(merged) < max_bars:
+            chunk = min(settings.max_klines_limit, max_bars - len(merged))
+            params: dict[str, Any] = {
+                "symbol": symbol,
+                "interval": binance_interval,
+                "limit": chunk,
+                "startTime": cursor,
+            }
+            data = await self._get_json("/fapi/v1/klines", params=params)
+            if not isinstance(data, list) or not data:
+                break
+            batch = [self._parse_candle(len(merged) + i, row) for i, row in enumerate(data)]
+            merged.extend(batch)
+            last_open = int(data[-1][0])
+            cursor = last_open + width_ms
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            if cursor > now_ms or len(data) < chunk:
+                break
+
+        if len(merged) > max_bars:
+            merged = merged[:max_bars]
+        return [
+            c.model_copy(update={"source_idx": i, "high_idx": i, "low_idx": i})
+            for i, c in enumerate(merged)
+        ]
+
     async def get_symbols(self) -> list[str]:
-        data = await self._get_json("/api/v3/exchangeInfo", params=None)
+        data = await self._get_json("/fapi/v1/exchangeInfo", params=None)
         symbols = [
             item["symbol"]
             for item in data.get("symbols", [])
@@ -208,7 +250,7 @@ class BinanceRepository:
         params: dict[str, Any] = {"symbol": symbol, "interval": binance_interval, "limit": limit}
         if end_time_ms is not None:
             params["endTime"] = int(end_time_ms)
-        data = await self._get_json("/api/v3/klines", params=params)
+        data = await self._get_json("/fapi/v1/klines", params=params)
         if not isinstance(data, list):
             raise MarketDataError("Unexpected kline response from Binance")
         return [self._parse_candle(idx, row) for idx, row in enumerate(data)]
@@ -251,7 +293,7 @@ class BinanceRepository:
 
     async def _get_json(self, path: str, params: Optional[dict[str, Any]]) -> Any:
         last_error = "unknown error"
-        base_urls = (self._base_url,) + tuple(url for url in BINANCE_BASE_URLS if url != self._base_url)
+        base_urls = (self._base_url,) + tuple(url for url in BINANCE_FUTURES_BASE_URLS if url != self._base_url)
         for base_url in base_urls:
             try:
                 async with httpx.AsyncClient(

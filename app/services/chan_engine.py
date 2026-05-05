@@ -1214,6 +1214,7 @@ def build_signals(
     pivots: list[Pivot],
     divergences: list[Divergence],
     trim_latest: Optional[int] = 12,
+    level: str = "bi",
 ) -> tuple[list[Signal], list[Signal]]:
     buy_signals: list[Signal] = []
     sell_signals: list[Signal] = []
@@ -1251,6 +1252,10 @@ def build_signals(
                 leave_seg_idx=divergence.leave_seg_idx,
                 macd_ratio=divergence.ratio,
                 evidence=evidence,
+                level=level,
+                stop_loss=_sl_buy(pivot.zd, pivot.zg),
+                take_profit=divergence.price + 2 * (divergence.price - _sl_buy(pivot.zd, pivot.zg)) if divergence.price > pivot.zd else None,
+                take_profit_1=divergence.price + (divergence.price - _sl_buy(pivot.zd, pivot.zg)) if divergence.price > pivot.zd else None,
             )
             buy_signals.append(signal)
             first_signal_segments.append((signal, divergence.leave_seg_idx, pivot, divergence.pivot_idx))
@@ -1274,29 +1279,33 @@ def build_signals(
                 leave_seg_idx=divergence.leave_seg_idx,
                 macd_ratio=divergence.ratio,
                 evidence=evidence,
+                level=level,
+                stop_loss=_sl_sell(pivot.zd, pivot.zg),
+                take_profit=divergence.price - 2 * (_sl_sell(pivot.zd, pivot.zg) - divergence.price) if pivot.zg > divergence.price else None,
+                take_profit_1=divergence.price - (_sl_sell(pivot.zd, pivot.zg) - divergence.price) if pivot.zg > divergence.price else None,
             )
             sell_signals.append(signal)
             first_signal_segments.append((signal, divergence.leave_seg_idx, pivot, divergence.pivot_idx))
 
     for first_signal, segment_idx, pivot, pivot_idx in first_signal_segments:
-        second = _second_signal(candles, movements, first_signal, segment_idx)
+        second = _second_signal(candles, movements, first_signal, segment_idx, level=level)
         if second is not None:
             (buy_signals if second.side == SignalSide.BUY else sell_signals).append(second)
             t2s = _second_extend_signal(
-                candles, movements, first_signal, segment_idx, second, pivot_idx, pivots
+                candles, movements, first_signal, segment_idx, second, pivot_idx, pivots, level=level
             )
             if t2s is not None:
                 (buy_signals if t2s.side == SignalSide.BUY else sell_signals).append(t2s)
-        third = _third_signal(candles, movements, first_signal, segment_idx, pivot)
+        third = _third_signal(candles, movements, first_signal, segment_idx, pivot, level=level)
         if third is not None:
             (buy_signals if third.side == SignalSide.BUY else sell_signals).append(third)
 
-    cl_buy, cl_sell = _class_like_second_signals(candles, movements, pivots)
+    cl_buy, cl_sell = _class_like_second_signals(candles, movements, pivots, level=level)
     buy_signals.extend(cl_buy)
     sell_signals.extend(cl_sell)
 
     for pivot_idx, pivot in enumerate(pivots):
-        for sig in _standalone_third_signals_for_pivot(candles, movements, pivot, pivot_idx):
+        for sig in _standalone_third_signals_for_pivot(candles, movements, pivot, pivot_idx, sig_level=level):
             (buy_signals if sig.side == SignalSide.BUY else sell_signals).append(sig)
 
     buy_out = _latest_signal_per_pivot_side(buy_signals)
@@ -1351,6 +1360,7 @@ def _class_like_second_signals(
     candles: list[Candle],
     movements: list[Stroke],
     pivots: list[Pivot],
+    level: str = "bi",
 ) -> tuple[list[Signal], list[Signal]]:
     """类二买/类二卖：中枢震荡内抬高低点 / 压低高点（不依赖一类背驰）。"""
     buys: list[Signal] = []
@@ -1391,6 +1401,10 @@ def _class_like_second_signals(
                         leave_seg_idx=base + i + 2,
                         macd_ratio=None,
                         evidence=f"笔中枢#{pivot_idx}，段#{base + i}..#{base + i + 2}",
+                        level=level,
+                        stop_loss=_sl_buy(pivot.zd, pivot.zg),
+                        take_profit=c.end_price + 2 * (c.end_price - _sl_buy(pivot.zd, pivot.zg)),
+                        take_profit_1=c.end_price + (c.end_price - _sl_buy(pivot.zd, pivot.zg)),
                     )
                 )
                 break
@@ -1420,6 +1434,10 @@ def _class_like_second_signals(
                         leave_seg_idx=base + i + 2,
                         macd_ratio=None,
                         evidence=f"笔中枢#{pivot_idx}，段#{base + i}..#{base + i + 2}",
+                        level=level,
+                        stop_loss=_sl_sell(pivot.zd, pivot.zg),
+                        take_profit=c.end_price - 2 * (_sl_sell(pivot.zd, pivot.zg) - c.end_price),
+                        take_profit_1=c.end_price - (_sl_sell(pivot.zd, pivot.zg) - c.end_price),
                     )
                 )
                 break
@@ -1549,6 +1567,32 @@ def _leaves_pivot_range(segment: Movement, zd: float, zg: float) -> bool:
 
 # 离开幅度相对中枢高度偏小 → 标为「类三」；否则仍为标准「三」类独立几何分支。
 _THIRD_CLASS_SHALLOW_LEAVE_RATIO = 0.10
+# Stop-loss buffer: push stop this fraction of pivot height beyond ZD/ZG for more room.
+_STOP_LOSS_BUFFER_RATIO = 0.15
+
+
+def _sl_buy(pivot_zd: float, pivot_zg: float) -> float:
+    """Stop-loss for a BUY signal: below ZD with buffer."""
+    h = pivot_zg - pivot_zd
+    return pivot_zd - _STOP_LOSS_BUFFER_RATIO * h
+
+
+def _sl_sell(pivot_zd: float, pivot_zg: float) -> float:
+    """Stop-loss for a SELL signal: above ZG with buffer."""
+    h = pivot_zg - pivot_zd
+    return pivot_zg + _STOP_LOSS_BUFFER_RATIO * h
+
+
+def _sl_buy_third(pivot_zd: float, pivot_zg: float) -> float:
+    """Stop-loss for a THIRD-class BUY: below ZG (price shouldn't fall back into pivot)."""
+    h = pivot_zg - pivot_zd
+    return pivot_zg - _STOP_LOSS_BUFFER_RATIO * h
+
+
+def _sl_sell_third(pivot_zd: float, pivot_zg: float) -> float:
+    """Stop-loss for a THIRD-class SELL: above ZD (price shouldn't rise back into pivot)."""
+    h = pivot_zg - pivot_zd
+    return pivot_zd + _STOP_LOSS_BUFFER_RATIO * h
 
 
 def _shallow_leave_up(leave: Movement, zd: float, zg: float) -> bool:
@@ -1600,11 +1644,12 @@ def _standalone_third_signals_for_pivot(
     movements: list[Movement],
     pivot: Pivot,
     pivot_idx: int,
+    sig_level: str = "bi",
 ) -> list[Signal]:
     """20 课：三买/三卖为离开+回抽确认，不必以一类背驰为前提。"""
     out: list[Signal] = []
     zd, zg = pivot.zd, pivot.zg
-    level = pivot.level
+    pivot_lv = pivot.level
     n = len(movements)
     k = pivot.end_bi + 1
     while k <= n - 3:
@@ -1626,20 +1671,24 @@ def _standalone_third_signals_for_pivot(
                 candles=candles,
                 side=SignalSide.BUY,
                 kind="third_class" if shallow else "third",
-                idx=confirm.end_idx,
-                price=confirm.end_price,
+                idx=retrace.end_idx,
+                price=retrace.end_price,
                 description=(
                     "类三买：向上浅离开中枢后回抽不破 ZG，再次上行确认（离开幅度相对中枢高度偏小）。"
                     if shallow
                     else "三买：向上离开中枢后回抽不破 ZG，再次上行确认（可无本级别一类背驰）"
                 ),
                 strength=0.66 if shallow else 0.78,
-                pivot_level=level,
+                pivot_level=pivot_lv,
                 pivot_idx=pivot_idx,
                 entry_seg_idx=k,
                 leave_seg_idx=k + 2,
                 macd_ratio=None,
-                evidence=f"{'笔' if level == 'bi' else '线段'}中枢#{pivot_idx}，离开#{k}回抽#{k + 1}确认#{k + 2}",
+                evidence=f"{'笔' if pivot_lv == 'bi' else '线段'}中枢#{pivot_idx}，离开#{k}回抽#{k + 1}确认#{k + 2}",
+                level=sig_level,
+                stop_loss=_sl_buy_third(zd, zg),
+                take_profit=retrace.end_price + 2 * (retrace.end_price - _sl_buy_third(zd, zg)),
+                take_profit_1=retrace.end_price + (retrace.end_price - _sl_buy_third(zd, zg)),
             )
         )
         k += 3
@@ -1664,20 +1713,24 @@ def _standalone_third_signals_for_pivot(
                 candles=candles,
                 side=SignalSide.SELL,
                 kind="third_class" if shallow else "third",
-                idx=confirm.end_idx,
-                price=confirm.end_price,
+                idx=retrace.end_idx,
+                price=retrace.end_price,
                 description=(
                     "类三卖：向下浅离开中枢后反抽不回 ZD，再次下行确认（离开幅度相对中枢高度偏小）。"
                     if shallow
                     else "三卖：向下离开中枢后反抽不回 ZD，再次下行确认（可无本级别一类背驰）"
                 ),
                 strength=0.66 if shallow else 0.78,
-                pivot_level=level,
+                pivot_level=pivot_lv,
                 pivot_idx=pivot_idx,
                 entry_seg_idx=k,
                 leave_seg_idx=k + 2,
                 macd_ratio=None,
-                evidence=f"{'笔' if level == 'bi' else '线段'}中枢#{pivot_idx}，离开#{k}反抽#{k + 1}确认#{k + 2}",
+                evidence=f"{'笔' if pivot_lv == 'bi' else '线段'}中枢#{pivot_idx}，离开#{k}反抽#{k + 1}确认#{k + 2}",
+                level=sig_level,
+                stop_loss=_sl_sell_third(zd, zg),
+                take_profit=retrace.end_price - 2 * (_sl_sell_third(zd, zg) - retrace.end_price),
+                take_profit_1=retrace.end_price - (_sl_sell_third(zd, zg) - retrace.end_price),
             )
         )
         k += 3
@@ -1693,6 +1746,7 @@ def _second_extend_signal(
     second: Signal,
     pivot_idx: int,
     pivots: list[Pivot],
+    level: str = "bi",
 ) -> Optional[Signal]:
     """二买/二卖延伸（T2S）：二类确认后，同中枢至下一中枢形成前，再次出现抬高/压低结构。"""
     if not settings.enable_t2s_second_extend or pivot_idx < 0 or pivot_idx >= len(pivots):
@@ -1730,6 +1784,10 @@ def _second_extend_signal(
                 leave_seg_idx=i + 2,
                 macd_ratio=first_signal.macd_ratio,
                 evidence=f"基于二类买点延伸｜枢#{pivot_idx}｜段#{i}..#{i + 2}",
+                level=level,
+                stop_loss=ref,
+                take_profit=confirm.end_price + 2 * (confirm.end_price - ref),
+                take_profit_1=confirm.end_price + (confirm.end_price - ref),
             )
         return None
     for i in range(base, max_i + 1):
@@ -1755,6 +1813,10 @@ def _second_extend_signal(
             leave_seg_idx=i + 2,
             macd_ratio=first_signal.macd_ratio,
             evidence=f"基于二类卖点延伸｜枢#{pivot_idx}｜段#{i}..#{i + 2}",
+            level=level,
+            stop_loss=ref,
+            take_profit=confirm.end_price - 2 * (ref - confirm.end_price),
+            take_profit_1=confirm.end_price - (ref - confirm.end_price),
         )
     return None
 
@@ -1764,6 +1826,7 @@ def _second_signal(
     segments: list[Movement],
     first_signal: Signal,
     segment_idx: int,
+    level: str = "bi",
 ) -> Optional[Signal]:
     retrace_idx = segment_idx + 1
     confirm_idx = segment_idx + 2
@@ -1790,6 +1853,10 @@ def _second_signal(
             leave_seg_idx=first_signal.leave_seg_idx,
             macd_ratio=first_signal.macd_ratio,
             evidence=f"基于一类买点：{first_signal.evidence}" if first_signal.evidence else None,
+            level=level,
+            stop_loss=first_signal.price,
+            take_profit=confirm.end_price + 2 * (confirm.end_price - first_signal.price),
+            take_profit_1=confirm.end_price + (confirm.end_price - first_signal.price),
         )
 
     if retrace.direction != Direction.DOWN or confirm.direction != Direction.UP:
@@ -1810,6 +1877,10 @@ def _second_signal(
         leave_seg_idx=first_signal.leave_seg_idx,
         macd_ratio=first_signal.macd_ratio,
         evidence=f"基于一类卖点：{first_signal.evidence}" if first_signal.evidence else None,
+        level=level,
+        stop_loss=first_signal.price,
+        take_profit=confirm.end_price - 2 * (first_signal.price - confirm.end_price),
+        take_profit_1=confirm.end_price - (first_signal.price - confirm.end_price),
     )
 
 
@@ -1819,6 +1890,7 @@ def _third_signal(
     first_signal: Signal,
     segment_idx: int,
     pivot: Pivot,
+    level: str = "bi",
 ) -> Optional[Signal]:
     retrace_idx = segment_idx + 1
     confirm_idx = segment_idx + 2
@@ -1831,6 +1903,7 @@ def _third_signal(
             return None
         if min(retrace.start_price, retrace.end_price) <= pivot.zg:
             return None
+        sl = _sl_buy_third(pivot.zd, pivot.zg)
         return _signal(
             candles=candles,
             side=SignalSide.BUY,
@@ -1845,12 +1918,17 @@ def _third_signal(
             leave_seg_idx=first_signal.leave_seg_idx,
             macd_ratio=first_signal.macd_ratio,
             evidence=f"基于一类卖点后的离开回踩：{first_signal.evidence}" if first_signal.evidence else None,
+            level=level,
+            stop_loss=sl,
+            take_profit=confirm.end_price + 2 * (confirm.end_price - sl),
+            take_profit_1=confirm.end_price + (confirm.end_price - sl),
         )
 
     if retrace.direction != Direction.UP or confirm.direction != Direction.DOWN:
         return None
     if max(retrace.start_price, retrace.end_price) >= pivot.zd:
         return None
+    sl = _sl_sell_third(pivot.zd, pivot.zg)
     return _signal(
         candles=candles,
         side=SignalSide.SELL,
@@ -1865,6 +1943,10 @@ def _third_signal(
         leave_seg_idx=first_signal.leave_seg_idx,
         macd_ratio=first_signal.macd_ratio,
         evidence=f"基于一类买点后的离开反抽：{first_signal.evidence}" if first_signal.evidence else None,
+        level=level,
+        stop_loss=sl,
+        take_profit=confirm.end_price - 2 * (sl - confirm.end_price),
+        take_profit_1=confirm.end_price - (sl - confirm.end_price),
     )
 
 
@@ -1882,11 +1964,16 @@ def _signal(
     leave_seg_idx: Optional[int] = None,
     macd_ratio: Optional[float] = None,
     evidence: Optional[str] = None,
+    level: str = "bi",
+    stop_loss: Optional[float] = None,
+    take_profit: Optional[float] = None,
+    take_profit_1: Optional[float] = None,
 ) -> Signal:
     safe_idx = min(max(idx, 0), len(candles) - 1)
     return Signal(
         side=side,
         kind=kind,
+        level=level,
         idx=safe_idx,
         time=candles[safe_idx].time,
         price=price,
@@ -1898,6 +1985,9 @@ def _signal(
         leave_seg_idx=leave_seg_idx,
         macd_ratio=macd_ratio,
         evidence=evidence,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        take_profit_1=take_profit_1,
     )
 
 

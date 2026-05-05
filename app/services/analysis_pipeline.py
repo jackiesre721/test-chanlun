@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.core.config import settings
-from app.core.models import AnalyzeResponse, Candle, Market, Pivot, Signal, Stroke
+from app.core.models import AnalyzeResponse, Candle, Market, Pivot, Signal, SignalSide, Stroke
 from app.services.action_focus import build_action_focus
 from app.services.analysis_cache import display_macd_for_analysis
 from app.services.chan_advanced import build_chan_advanced_context
-from app.services.risk_controls import enrich_signals_with_sl_tp
 from app.services.chan_engine import (
     build_active_stroke,
     build_divergences,
@@ -19,7 +18,6 @@ from app.services.chan_engine import (
     build_segments,
     build_signals,
     build_strokes,
-    build_t1p_pan_signals,
     find_fractals,
     hydrate_stroke_pause,
     normalize_candles,
@@ -95,6 +93,10 @@ def build_analyze_bundle(
     )
 
 
+_SECOND_KINDS = {"second", "second_extend"}
+_HIGHER_ALLOWED_KINDS = {"second", "second_extend", "third", "second_class", "third_class"}
+
+
 def build_analyze_bundle_from_normalized(
     normalized: list[Candle],
     *,
@@ -136,20 +138,70 @@ def build_analyze_bundle_from_normalized(
     fake_bis = build_fake_bis(strokes, fractals, normalized)
 
     bi_buy_signals, bi_sell_signals = build_signals(
-        normalized, strokes, bi_pivots, bi_divergences, trim_latest=None
+        normalized, strokes, bi_pivots, bi_divergences, trim_latest=None, level="bi"
     )
     segment_buy_signals, segment_sell_signals = build_signals(
-        normalized, segments, segment_pivots, segment_divergences, trim_latest=None
+        normalized, segments, segment_pivots, segment_divergences, trim_latest=None, level="segment"
     )
-    t1p_buy, t1p_sell = (
-        build_t1p_pan_signals(normalized, strokes, display_macd) if not bi_pivots else ([], [])
-    )
-    all_buy = sorted(bi_buy_signals + segment_buy_signals + t1p_buy, key=lambda s: s.idx)
-    all_sell = sorted(bi_sell_signals + segment_sell_signals + t1p_sell, key=lambda s: s.idx)
-    all_buy = enrich_signals_with_sl_tp(all_buy, fractals, pivots)
-    all_sell = enrich_signals_with_sl_tp(all_sell, fractals, pivots)
-    buy_signals = all_buy[-12:]
-    sell_signals = all_sell[-12:]
+    # 段级一类信号标记（不再直接丢弃）
+    for s in segment_buy_signals:
+        if s.kind not in _HIGHER_ALLOWED_KINDS:
+            s.rr_filtered = True
+    for s in segment_sell_signals:
+        if s.kind not in _HIGHER_ALLOWED_KINDS:
+            s.rr_filtered = True
+    all_buy = sorted(bi_buy_signals + segment_buy_signals, key=lambda s: s.idx)
+    all_sell = sorted(bi_sell_signals + segment_sell_signals, key=lambda s: s.idx)
+
+    # 趋势过滤 + 盈亏比过滤（标记而非丢弃）
+    _THIRD_KINDS = {"third", "third_class"}
+    lf = lines_form.primary if lines_form else "insufficient"
+    net_up = strokes[-1].end_price > strokes[0].start_price if len(strokes) >= 2 else True
+
+    def _passes_filter(sig: Signal) -> bool:
+        # 盈亏比过滤：有止损时要求 RR >= 1.5
+        if sig.stop_loss is not None and sig.price != sig.stop_loss:
+            risk = abs(sig.price - sig.stop_loss)
+            if risk > 0 and sig.take_profit is not None:
+                reward = abs(sig.take_profit - sig.price)
+                if reward / risk < 1.5:
+                    return False
+        # 趋势过滤：只在明确反向趋势时过滤三类信号
+        if lf == "trend":
+            if net_up and sig.side == SignalSide.SELL and sig.kind in _THIRD_KINDS:
+                return False
+            if not net_up and sig.side == SignalSide.BUY and sig.kind in _THIRD_KINDS:
+                return False
+        return True
+
+    for s in all_buy + all_sell:
+        if s.rr_filtered:
+            continue
+        if not _passes_filter(s):
+            s.rr_filtered = True
+
+    # 段级别信号：计算笔级别止损（stop_loss_2）
+    _THIRD_KINDS_SL = {"third", "third_class"}
+    for sig in all_buy + all_sell:
+        if sig.level != "segment" or sig.stop_loss is None:
+            continue
+        # Find bi pivot whose range contains the signal index
+        for bp in bi_pivots:
+            if bp.start_idx <= sig.idx <= bp.end_idx:
+                if sig.side == SignalSide.BUY:
+                    if sig.kind in _THIRD_KINDS_SL:
+                        sig.stop_loss_2 = bp.zg - 0.15 * (bp.zg - bp.zd)
+                    else:
+                        sig.stop_loss_2 = bp.zd - 0.15 * (bp.zg - bp.zd)
+                else:
+                    if sig.kind in _THIRD_KINDS_SL:
+                        sig.stop_loss_2 = bp.zd + 0.15 * (bp.zg - bp.zd)
+                    else:
+                        sig.stop_loss_2 = bp.zg + 0.15 * (bp.zg - bp.zd)
+                break
+
+    buy_signals = [s for s in all_buy if not s.rr_filtered][-12:]
+    sell_signals = [s for s in all_sell if not s.rr_filtered][-12:]
 
     last_i = len(normalized) - 1
     action_focus = build_action_focus(
@@ -192,15 +244,15 @@ def build_analyze_bundle_from_normalized(
         symbol=symbol,
         interval=interval,
         current_price=normalized[-1].close,
-        data_source="Binance spot",
+        data_source="Binance USD-M Futures",
         rules_version=RULES_VERSION,
         segment_engine=settings.segment_engine,
         lines_form=lines_form,
         kline_data=normalized,
         macd_data=display_macd,
         bollinger=boll_series,
-        rsi14=rsi14_series,
-        fractals=fractals,
+        rsi14=[],
+        fractals=[],
         bis=strokes,
         active_bi=active_stroke,
         segments=segments,
@@ -210,12 +262,14 @@ def build_analyze_bundle_from_normalized(
         zhongshus_lv2=higher_pivots,
         buy_signals=buy_signals,
         sell_signals=sell_signals,
+        buy_signals_filtered=[s for s in all_buy if s.rr_filtered][-12:],
+        sell_signals_filtered=[s for s in all_sell if s.rr_filtered][-12:],
         td_summary=td,
         action_focus=action_focus,
         warning=warning,
         advanced_context=advanced_context,
         kline_parent_refs=kline_refs,
-        fake_bis=fake_bis,
+        fake_bis=[],
     )
     return AnalyzeBundle(response=response, all_buy_signals=all_buy, all_sell_signals=all_sell)
 

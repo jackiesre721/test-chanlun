@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { LAYER_PRESETS, LAYER_SERIES_MAP } from "./constants.js";
+import { LAYER_PRESETS, LAYER_SERIES_MAP, HIGHER_INTERVAL_LABEL } from "./constants.js";
 import { analyze } from "./api.js";
 import { render } from "./render.js";
 import { loadGlmSettingsFromStorage, saveGlmSettingsToStorage, renderVerdictPanel } from "./verdict.js";
@@ -45,6 +45,23 @@ function syncSidebarToggleLabel() {
   if (btn) btn.textContent = hidden ? "显示侧栏" : "隐藏侧栏";
 }
 
+function syncSegmentLabels() {
+  const iv = document.getElementById("interval")?.value || "240";
+  const hiLabel = HIGHER_INTERVAL_LABEL[iv] || "";
+  const segLabel = document.querySelector('label[for="showSegments"]') || document.getElementById("showSegments")?.closest("label");
+  const segPivotLabel = document.querySelector('label[for="showZhongshuSeg"]') || document.getElementById("showZhongshuSeg")?.closest("label");
+  if (segLabel) {
+    const cb = segLabel.querySelector("input");
+    const base = "线段";
+    segLabel.lastChild.textContent = hiLabel ? ` ${base}（≈${hiLabel}笔）` : ` ${base}`;
+  }
+  if (segPivotLabel) {
+    const cb = segPivotLabel.querySelector("input");
+    const base = "线段中枢带";
+    segPivotLabel.lastChild.textContent = hiLabel ? ` ${base}（≈${hiLabel}中枢）` : ` ${base}`;
+  }
+}
+
 function initChartLayoutPreferences() {
   try {
     if (localStorage.getItem("chanlan_toolbar_collapsed") === "1") {
@@ -61,41 +78,13 @@ function initChartLayoutPreferences() {
 }
 
 async function loadDynamicSymbols() {
-  try {
-    const prefix = (document.querySelector("meta[name='chanlan-api-prefix']")?.getAttribute("content") || "").replace(/\/$/, "");
-    const res = await fetch(`${prefix}/api/symbols`);
-    const data = await res.json();
-    const banner = document.getElementById("symbolRegistryBanner");
-    if (!res.ok) {
-      if (banner) banner.hidden = false;
-      throw new Error("bad response");
-    }
-    if (banner) banner.hidden = !data.registry_degraded;
-
-    if (data.success && Array.isArray(data.symbols) && data.symbols.length > 0) {
-      const sel = document.getElementById("symbol");
-      const prev = sel.value || "BTCUSDT";
-      sel.innerHTML = "";
-      data.symbols.forEach(s => {
-        const o = document.createElement("option");
-        o.value = s;
-        o.textContent = s;
-        if (s === prev) o.selected = true;
-        sel.appendChild(o);
-      });
-    }
-  } catch (e) {
-    const banner = document.getElementById("symbolRegistryBanner");
-    if (banner) banner.hidden = false;
-    const warn = document.getElementById("warning");
-    if (warn) warn.textContent = "品种列表加载失败，使用默认列表。";
-  }
+  // Fixed whitelist — no dynamic fetch needed.
 }
 
 // Event bindings
 document.getElementById("analyzeBtn").addEventListener("click", analyze);
 document.getElementById("symbol").addEventListener("change", analyze);
-document.getElementById("interval").addEventListener("change", analyze);
+document.getElementById("interval").addEventListener("change", () => { syncSegmentLabels(); analyze(); });
 
 document.querySelectorAll(".preset-btn[data-preset]").forEach(btn => {
   btn.addEventListener("click", () => applyLayerPreset(btn.getAttribute("data-preset")));
@@ -138,6 +127,7 @@ document.getElementById("compactSubplots")?.addEventListener("change", () => {
 
 initLayerPresetFromStorage();
 initChartLayoutPreferences();
+syncSegmentLabels();
 loadGlmSettingsFromStorage();
 initDisciplineUi();
 initSidebarExtras();
@@ -161,6 +151,14 @@ Object.keys(LAYER_SERIES_MAP).forEach(id => {
       state.chart.dispatchAction({ type: checked ? "legendSelect" : "legendUnSelect", name });
     });
   });
+});
+// 段中枢开关同时控制段级信号的渲染，需要完整重绘
+document.getElementById("showZhongshuSeg")?.addEventListener("change", () => {
+  if (state.lastResult) render(state.lastResult);
+});
+// 过滤信号开关需要完整重绘（动态添加/移除 series）
+document.getElementById("showFilteredSignals")?.addEventListener("change", () => {
+  if (state.lastResult) render(state.lastResult);
 });
 
 window.addEventListener("resize", () => state.chart.resize());

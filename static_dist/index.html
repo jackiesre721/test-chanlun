@@ -10,8 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script type="module" crossorigin src="/assets/index-TdDJJhga.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-huvQsZoz.css">
+  <script type="module" crossorigin src="/assets/index-rvNKDXAE.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D5rSRXbz.css">
 </head>
 <body>
   <div id="analyzeProgress" class="analyze-progress" aria-hidden="true"></div>
@@ -27,17 +27,23 @@
         <select id="symbol" aria-label="品种">
           <option>BTCUSDT</option>
           <option>ETHUSDT</option>
+          <option>SOLUSDT</option>
+          <option>XAUUSDT</option>
+          <option>DOGEUSDT</option>
         </select>
       </div>
       <div class="group">
         <label for="interval">周期</label>
-        <select id="interval" aria-label="周期" title="下拉中的「约当…」为复盘尺度示意；本次请求根数固定为后端允许上限（默认 1000 根合并 K）。">
-          <option value="1" selected>1 分钟｜约当日线复盘窗口</option>
-          <option value="15">15 分钟｜约周线尺度</option>
-          <option value="30">30 分钟｜约月线尺度</option>
+        <select id="interval" aria-label="周期" title="选择分析周期，上级笔/中枢将自动取对应的高一级别。">
+          <option value="1" selected>1 分钟</option>
+          <option value="5">5 分钟</option>
+          <option value="15">15 分钟</option>
+          <option value="30">30 分钟</option>
           <option value="60">1 小时</option>
           <option value="240">4 小时</option>
           <option value="1440">日线</option>
+          <option value="10080">周线</option>
+          <option value="43200">月线</option>
         </select>
       </div>
       <button id="analyzeBtn" type="button" class="primary analyze-prominent">分析</button>
@@ -72,6 +78,7 @@
         <label class="layer-tip" title="由若干笔构成的更大级别折线结构；比单笔更平滑，用来表述线段级别的走势。"><input type="checkbox" id="showSegments" checked /> 线段</label>
         <label class="layer-tip" title="三根 K 线构成的局部顶/底分型；是画笔的起点，勾选后图上用三角标出（小周期会显得密）。"><input type="checkbox" id="showFractals" /> 分型</label>
         <label class="layer-tip" title="在本页规则满足时给出的买卖点标注，用于语境披露；不构成投资建议或下单指令。"><input type="checkbox" id="showSignals" checked /> 买卖点</label>
+        <label class="layer-tip" title="显示盈亏比不足 1.5 或趋势/段级一类的信号，半透明标记区分。"><input type="checkbox" id="showFilteredSignals" /> 含过滤信号</label>
         <label class="layer-tip" title="力度背离（常与 MACD 等对比）在引擎中的标记；提示动能衰减或衰竭语境，不等于入场信号。"><input type="checkbox" id="showDivergences" /> 背驰点</label>
         <label class="layer-tip" title="至少三笔重叠形成的盘整中枢区间 [ZD,ZG]；半透明带标示震荡箱体与多空争夺区域（本级笔中枢）。"><input type="checkbox" id="showZhongshu" checked /> 笔中枢带</label>
         <label class="layer-tip" title="以线段为基础识别的中枢区间带；通常跨越多笔，用来观察线段级别的盘整与趋势中继。"><input type="checkbox" id="showZhongshuSeg" checked /> 线段中枢带</label>
@@ -79,10 +86,7 @@
       <div class="layer-group">
         <span class="layer-group-label">辅助</span>
         <label class="layer-tip" title="布林带：上轨/中轨/下轨刻画价格波动通道与均值回归参考；与本页缠论结构独立。"><input type="checkbox" id="showBoll" checked /> BOLL</label>
-        <label class="layer-tip" title="RSI(14)：相对强弱指标，显示在下方副图；用于超买超卖参照，可与走势强弱对照（勾选后出现副图 RSI）。"><input type="checkbox" id="showRsi" checked /> RSI</label>
-        <label class="layer-tip" title="为满足几何连续性生成的虚拟笔（灰虚线）；用于对齐上级视角或补缺段，不等于实盘成交轨迹。"><input type="checkbox" id="showFakeBi" /> FakeBI</label>
-        <label class="layer-tip" title="更大级别映射到当前图表上的笔走向（天蓝虚线）；用来对照上下级别方向是否共振。"><input type="checkbox" id="showBisLv2" /> 上级笔</label>
-        <label class="layer-tip" title="更大级别的中枢在主周期上的投影带；观察「大级别箱体」与当前价格相对位置。"><input type="checkbox" id="showZhongshuLv2" /> 上级中枢</label>
+        <label class="layer-tip" title="MACD（12,26,9）柱状图 + DIF/DEA 线，显示在副图面板。"><input type="checkbox" id="showMacd" checked /> MACD</label>
       </div>
       <details class="layer-help-details">
         <summary>各图层是做什么的？（点开一览）</summary>
@@ -96,9 +100,7 @@
           <dt>背驰点</dt><dd>走势与力度的背离标记；提示衰竭语境，非入场指令。</dd>
           <dt>笔中枢带</dt><dd>三笔重叠的盘整区间 [ZD,ZG]，本级震荡箱体。</dd>
           <dt>线段中枢带</dt><dd>线段级中枢区间，跨度更大。</dd>
-          <dt>BOLL / RSI</dt><dd>经典技术指标：通道与强弱；与缠论结构独立对照。</dd>
-          <dt>FakeBI</dt><dd>虚拟笔线段，用于几何对齐或补缺。</dd>
-          <dt>上级笔 / 上级中枢</dt><dd>更大级别映射到本图，观察级别共振与大势箱体。</dd>
+          <dt>BOLL</dt><dd>布林带：通道与均值回归参考；与缠论结构独立对照。</dd>
           <dt>预设 · 看盘</dt><dd>常用看盘组合，分型/背驰默认关，减轻噪声。</dd>
           <dt>预设 · 复盘</dt><dd>打开分型与背驰等，便于对照复盘。</dd>
           <dt>预设 · 极简</dt><dd>只保留核心折线与买卖点参考。</dd>
@@ -108,7 +110,7 @@
       <details class="legend-details">
         <summary role="button" aria-expanded="false">图例说明（展开查看颜色与线型）</summary>
         <div class="layer-legend-full">
-          琥珀线=本级笔｜青虚线=未完成笔｜深橙粗=线段｜虚灰=FakeBI｜浅橙三线=BOLL｜紫线=RSI(14)｜天蓝虚=上级笔｜紫三角=顶分型｜绿三角=底分型｜亮绿三角=买点｜亮红钉=卖点｜青/粉菱形=背驰｜黄钉=笔停顿｜紫填充+实线边框=笔中枢｜橙填充+虚线边框=线段中枢｜洋红带=上级中枢｜副图 1 MACD｜副图 2 RSI（勾选才显示）。
+          白线=本级笔｜青虚线=未完成笔｜蓝色线=线段｜浅橙三线=BOLL｜亮绿三角=买点｜亮红钉=卖点｜青/粉菱形=背驰｜黄钉=笔停顿｜白色虚线边框=笔中枢｜蓝色虚线边框=线段中枢｜副图 MACD。
         </div>
       </details>
     </div>
@@ -246,23 +248,34 @@
         </div>
       </details>
       <details class="card workspace-card">
-        <summary class="title">演示回测（/backtest/quick）</summary>
+        <summary class="title">演示回测</summary>
         <p class="muted" style="font-size:11px;line-height:1.55;margin-bottom:10px;">
-          简化信号撮合 + <strong>fee_bps</strong> 手续费假设；样本长度受后端限制。结论仅供<strong>假设检验</strong>，非业绩承诺。
+          简化信号撮合 + 手续费假设；结论仅供<strong>假设检验</strong>，非业绩承诺。
         </p>
-        <div class="workspace-row"><label class="workspace-label">品种</label><input type="text" id="btSymbol" placeholder="BTCUSDT" style="flex:1;" /></div>
-        <div class="workspace-row"><label class="workspace-label">周期码</label><input type="text" id="btInterval" placeholder="240" style="flex:1;" title="与主图 interval 取值一致" /></div>
-        <div class="workspace-row"><label class="workspace-label">bars</label><input type="number" id="btMaxBars" min="500" step="100" value="6000" style="flex:1;" /></div>
-        <div class="workspace-row"><label class="workspace-label">策略</label>
-          <select id="btStrategy" style="flex:1;">
-            <option value="long_only_flip">long_only_flip（仅多）</option>
-            <option value="long_short_flip">long_short_flip（多空）</option>
+        <div class="workspace-row"><label class="workspace-label">品种</label>
+          <select id="btSymbol" style="flex:1;">
+            <option>BTCUSDT</option>
+            <option>ETHUSDT</option>
+            <option>SOLUSDT</option>
+            <option>XAUUSDT</option>
+            <option>DOGEUSDT</option>
           </select>
         </div>
-        <div class="workspace-row"><label class="workspace-label">手续费 bps</label><input type="number" id="btFeeBps" min="0" step="1" value="10" style="flex:1;" title="10 = 0.1% 单边量级示意" /></div>
+        <div class="workspace-row"><label class="workspace-label">开始时间</label><input type="datetime-local" id="btStartTime" style="flex:1;" /></div>
+        <div class="workspace-row"><label class="workspace-label">结束时间</label><input type="datetime-local" id="btEndTime" style="flex:1;" /></div>
+        <div class="workspace-row"><label class="workspace-label">策略</label>
+          <select id="btStrategy" style="flex:1;">
+            <option value="long_only_flip">仅做多</option>
+            <option value="long_short_flip">多空</option>
+          </select>
+        </div>
+        <div class="workspace-row"><label class="workspace-label">手续费 bps</label><input type="number" id="btFeeBps" min="0" step="1" value="10" style="flex:1;" title="10 = 0.1% 单边" /></div>
+        <div class="workspace-row"><label class="workspace-label">杠杆倍数</label><input type="number" id="btLeverage" min="1" max="100" step="1" value="1" style="flex:1;" title="合约杠杆 1~100" /></div>
+        <div class="workspace-row"><label class="workspace-label">每笔保证金</label><input type="number" id="btTradeAmount" min="1" step="any" value="" placeholder="留空=全仓" style="flex:1;" title="每笔固定保证金（USDT），留空则全仓复利" /></div>
         <div class="workspace-row"><label class="workspace-label">初始权益</label><input type="number" id="btEquity" min="100" step="any" value="10000" style="flex:1;" /></div>
         <button type="button" id="btRunBtn" class="primary" style="margin-top:10px;padding:8px 14px;font-size:12px;width:100%;box-sizing:border-box;">运行演示回测</button>
         <div id="btOut" class="muted" style="margin-top:12px;font-size:11px;line-height:1.65;"></div>
+        <label id="btOverlayLabel" class="layer-tip" style="margin-top:8px;font-size:11px;" title="在 K 线图上标注回测成交点（绿色三角=买入，红色倒三角=卖出）。"><input type="checkbox" id="showBtOverlay" disabled /> 图上显示回测交易点（先运行回测）</label>
       </details>
       <div class="card">
         <div class="title">结构状态</div>

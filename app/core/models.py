@@ -24,7 +24,7 @@ class SignalSide(str, Enum):
 
 
 # App-internal interval codes → Binance mapping lives in BinanceRepository.
-ALLOWED_ANALYSIS_INTERVALS = frozenset({"1", "15", "30", "60", "240", "1440"})
+ALLOWED_ANALYSIS_INTERVALS = frozenset({"1", "5", "15", "30", "60", "240", "1440", "10080", "43200"})
 
 
 def normalize_supported_symbol(value: str) -> str:
@@ -164,6 +164,7 @@ class BollingerPoint(BaseModel):
 class Signal(BaseModel):
     side: SignalSide
     kind: Literal["first", "second", "second_extend", "third", "second_class", "third_class", "td9"]
+    level: Literal["bi", "segment", "higher_bi"] = "bi"
     idx: int
     time: str
     price: float
@@ -175,6 +176,11 @@ class Signal(BaseModel):
     leave_seg_idx: Optional[int] = None
     macd_ratio: Optional[float] = None
     evidence: Optional[str] = None
+    stop_loss: Optional[float] = None
+    stop_loss_2: Optional[float] = None  # secondary stop (bi-level for segment signals)
+    take_profit: Optional[float] = None  # TP2: 2:1 RR
+    take_profit_1: Optional[float] = None  # TP1: 1:1 RR
+    rr_filtered: bool = False  # True = signal didn't pass RR/trend/segment-first filter
 
 
 class TdSummary(BaseModel):
@@ -217,8 +223,14 @@ class ActionFocusRecentDivergence(BaseModel):
 class ActionFocusRecentSignal(BaseModel):
     side: SignalSide
     kind: Literal["first", "second", "second_extend", "third", "second_class", "third_class", "td9"]
+    level: Literal["bi", "segment", "higher_bi"] = "bi"
     idx: int = Field(ge=0)
     time: str
+    price: float = 0.0
+    stop_loss: Optional[float] = None
+    stop_loss_2: Optional[float] = None
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
 
 
 class LinesFormSummary(BaseModel):
@@ -425,6 +437,8 @@ class AnalyzeResponse(BaseModel):
     zhongshus_lv2: list[Pivot]
     buy_signals: list[Signal]
     sell_signals: list[Signal]
+    buy_signals_filtered: list[Signal] = Field(default_factory=list)
+    sell_signals_filtered: list[Signal] = Field(default_factory=list)
     td_summary: TdSummary
     action_focus: ActionFocus
     warning: Optional[str] = None
@@ -538,10 +552,13 @@ class QuickBacktestRequest(BaseModel):
     market: Market = Market.CRYPTO
     symbol: str = "BTCUSDT"
     interval: str = "240"
-    max_bars: int = Field(default=8000, ge=500, le=50000)
+    start_time_ms: Optional[int] = None
+    end_time_ms: Optional[int] = None
     strategy: Literal["long_only_flip", "long_short_flip"] = "long_only_flip"
     initial_equity_usdt: float = Field(default=10_000.0, gt=0)
+    leverage: int = Field(default=1, ge=1, le=100)
     fee_bps: float = Field(default=10.0, ge=0)
+    trade_amount_usdt: Optional[float] = Field(default=None, gt=0)
 
     @field_validator("symbol")
     @classmethod
@@ -562,6 +579,11 @@ class QuickBacktestTrade(BaseModel):
     action: Literal["BUY", "SELL"]
     price: float
     equity_after: float
+    exit_reason: str = "signal"
+    quantity: float = 0.0
+    stop_loss: Optional[float] = None
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
 
 
 class QuickBacktestMetrics(BaseModel):
@@ -571,6 +593,9 @@ class QuickBacktestMetrics(BaseModel):
     total_return_fraction: float
     max_drawdown_fraction: float
     sharpe_naive: Optional[float] = None
+    win_rate: Optional[float] = None
+    profit_factor: Optional[float] = None
+    stop_loss_hits: int = 0
 
 
 class QuickBacktestResponse(BaseModel):

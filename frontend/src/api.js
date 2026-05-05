@@ -67,6 +67,13 @@ export async function analyze() {
       );
     }
     ensureAdvancedContextMerged(result);
+    // Merge filtered signals into the main arrays so the renderer can split by rr_filtered flag
+    if (Array.isArray(result.buy_signals_filtered)) {
+      result.buy_signals = [...result.buy_signals, ...result.buy_signals_filtered];
+    }
+    if (Array.isArray(result.sell_signals_filtered)) {
+      result.sell_signals = [...result.sell_signals, ...result.sell_signals_filtered];
+    }
     state.lastResult = result;
     document.getElementById("loading").style.display = "none";
     render(result);

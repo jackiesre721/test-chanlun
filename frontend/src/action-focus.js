@@ -58,7 +58,16 @@ function actionFocusHtmlFromApi(actionFocus, activeBiFallback) {
   if (actionFocus.recent_signal) {
     const s = actionFocus.recent_signal;
     const sideCn = s.side === "BUY" ? "买" : "卖";
-    hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${KIND_NAME[s.kind] || s.kind}${sideCn}</b>（${s.time}），用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>`;
+    const priceStr = s.price ? Number(s.price).toFixed(2) : "—";
+    let sltpHtml = "";
+    if (s.stop_loss != null || s.take_profit_1 != null || s.take_profit_2 != null) {
+      const slHtml = s.stop_loss != null ? `<div>止损(段级)：<b style="color:#ff6e40">${Number(s.stop_loss).toFixed(2)}</b></div>` : "";
+      const sl2Html = s.stop_loss_2 != null ? `<div>止损(笔级)：<b style="color:#ffab40">${Number(s.stop_loss_2).toFixed(2)}</b></div>` : "";
+      const tp1Html = s.take_profit_1 != null ? `<div>止盈1（1:1）：<b style="color:#69ff9e">${Number(s.take_profit_1).toFixed(2)}</b></div>` : "";
+      const tp2Html = s.take_profit_2 != null ? `<div>止盈2（2:1）：<b style="color:#69ff9e">${Number(s.take_profit_2).toFixed(2)}</b></div>` : "";
+      sltpHtml = `<div style="margin-left:12px;margin-top:4px;font-size:12px;line-height:1.8;">${slHtml}${sl2Html}${tp1Html}${tp2Html}</div>`;
+    }
+    hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${KIND_NAME[s.kind] || s.kind}${sideCn}</b>（${s.time}）@ <b>${priceStr}</b>，用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>${sltpHtml}`;
   }
 
   return `
@@ -120,7 +129,16 @@ export function renderActionFocus(result) {
   let hintLine = `<div style="margin-top:8px;color:rgba(232,236,246,.62);">无指令式买卖点，仅为结构语境披露。</div>`;
   if (recentSignal) {
     const sideCn = recentSignal.side === "BUY" ? "买" : "卖";
-    hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${KIND_NAME[recentSignal.kind] || recentSignal.kind}${sideCn}</b>（${recentSignal.time}），用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>`;
+    const priceStr = recentSignal.price ? Number(recentSignal.price).toFixed(2) : "—";
+    let sltpHtml = "";
+    if (recentSignal.stop_loss != null || recentSignal.take_profit_1 != null || recentSignal.take_profit != null) {
+      const slHtml = recentSignal.stop_loss != null ? `<div>止损(段级)：<b style="color:#ff6e40">${Number(recentSignal.stop_loss).toFixed(2)}</b></div>` : "";
+      const sl2Html = recentSignal.stop_loss_2 != null ? `<div>止损(笔级)：<b style="color:#ffab40">${Number(recentSignal.stop_loss_2).toFixed(2)}</b></div>` : "";
+      const tp1Html = recentSignal.take_profit_1 != null ? `<div>止盈1（1:1）：<b style="color:#69ff9e">${Number(recentSignal.take_profit_1).toFixed(2)}</b></div>` : "";
+      const tp2Html = recentSignal.take_profit != null ? `<div>止盈2（2:1）：<b style="color:#69ff9e">${Number(recentSignal.take_profit).toFixed(2)}</b></div>` : "";
+      sltpHtml = `<div style="margin-left:12px;margin-top:4px;font-size:12px;line-height:1.8;">${slHtml}${sl2Html}${tp1Html}${tp2Html}</div>`;
+    }
+    hintLine = `<div style="margin-top:8px;color:#ffbf69;"><b>结构锚点</b>：最近窗口曾标注<b>${KIND_NAME[recentSignal.kind] || recentSignal.kind}${sideCn}</b>（${recentSignal.time}）@ <b>${priceStr}</b>，用于对照<strong>后续</strong>边界测试；<b>不是</b>「此刻必须进场」的指令。</div>${sltpHtml}`;
   }
 
   el.innerHTML = `

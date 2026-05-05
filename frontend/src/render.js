@@ -29,38 +29,46 @@ function strokeSeries(name, strokes, len, color, width, dashed) {
   };
 }
 
-function segmentPolylineSeries(name, segments, bis, len, color, width) {
-  const b = bis || [];
+function segmentSeries(name, segments, len, color, width) {
   const segs = segments || [];
-  if (!segs.length || !b.length || !len) return null;
-  const data = Array(len).fill(null);
-  const fillStrokeSpan = st => {
-    if (!st) return;
-    const ns = st.norm_start_idx != null ? Number(st.norm_start_idx) : Number(st.start_idx);
-    const ne = st.norm_end_idx != null ? Number(st.norm_end_idx) : Number(st.end_idx);
-    const a = Math.min(ns, ne);
-    const z = Math.max(ns, ne);
-    let pa = st.start_price;
-    let pz = st.end_price;
-    if (ns !== a) { pa = st.end_price; pz = st.start_price; }
-    const span = z - a;
-    if (span <= 0) { if (a >= 0 && a < len) data[a] = pa; return; }
-    for (let k = a; k <= z && k < len; k++) {
-      const t = (k - a) / span;
-      data[k] = pa + (pz - pa) * t;
-    }
-  };
+  if (!segs.length || !len) return null;
+  // 收集每个线段的起终点，按顺序排列后插入 null 断开不连续的线段
+  const points = [];
   for (const seg of segs) {
-    const lo = Math.max(0, Math.floor(Number(seg.start_bi)));
-    const hi = Math.min(b.length - 1, Math.floor(Number(seg.end_bi)));
-    if (hi < lo) continue;
-    for (let i = lo; i <= hi; i++) fillStrokeSpan(b[i]);
+    const si = Number(seg.start_idx);
+    const ei = Number(seg.end_idx);
+    if (si < 0 || ei >= len || si === ei) continue;
+    points.push({ idx: si, price: Number(seg.start_price) });
+    points.push({ idx: ei, price: Number(seg.end_price) });
+  }
+  if (!points.length) return null;
+  // 按线段对（每两点一组）构建 data 数组
+  const data = Array(len).fill(null);
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    const a = points[i], b = points[i + 1];
+    const lo = Math.min(a.idx, b.idx);
+    const hi = Math.max(a.idx, b.idx);
+    const pLo = a.idx <= b.idx ? a.price : b.price;
+    const pHi = a.idx <= b.idx ? b.price : a.price;
+    const span = hi - lo;
+    for (let k = lo; k <= hi && k < len; k++) {
+      data[k] = pLo + (pHi - pLo) * ((k - lo) / span);
+    }
+    // 在相邻线段之间插入 null 断开（跳过首对）
+    if (i + 2 < points.length) {
+      const nextStart = points[i + 2].idx;
+      if (nextStart > hi + 1) {
+        // 有间隔，中间已经是 null，无需额外处理
+      } else if (nextStart === hi || nextStart === hi + 1) {
+        // 连续线段，保留 hi 处的值让它们连上
+      }
+    }
   }
   const has = data.some(v => v != null);
   if (!has) return null;
   return {
     name, type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 8,
-    data, connectNulls: false, showSymbol: false, symbol: "none",
+    data, connectNulls: true, showSymbol: false, symbol: "none",
     lineStyle: {
       color, width, cap: "round", join: "round",
       shadowBlur: 10, shadowColor: "rgba(255,167,38,0.45)", shadowOffsetY: 0
@@ -135,7 +143,7 @@ function pivotSeries(name, pivots, palettePivot) {
       silent: true,
       itemStyle: {
         color: fill, borderColor: border, borderWidth: 1.25,
-        borderType: segBand ? "dashed" : "solid",
+        borderType: "dashed",
         shadowBlur: 8, shadowColor: "rgba(0,0,0,0.45)",
       },
       data: pivots.map(p => [{ xAxis: p.start_idx, yAxis: p.zd }, { xAxis: p.end_idx, yAxis: p.zg }]),
@@ -208,14 +216,65 @@ function linesFormGraphic(result) {
 function signalSeries(name, signals, color, symbolShape) {
   return {
     name, type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 13,
-    symbol: symbolShape, symbolSize: 17,
-    itemStyle: { color, borderColor: "#263238", borderWidth: 1.5 },
+    symbol: symbolShape, symbolSize: 22,
+    itemStyle: { color, borderColor: "#263238", borderWidth: 2 },
+    label: {
+      show: true,
+      position: signals[0]?.side === "BUY" ? "bottom" : "top",
+      distance: 8,
+      fontSize: 13,
+      fontWeight: 700,
+      color: "#fff",
+      textBorderColor: color,
+      textBorderWidth: 3,
+      formatter(p) {
+        const s = p.data?.sig;
+        if (!s) return "";
+        const lv = { bi: "笔", segment: "段", higher_bi: "上" }[s.level] || "";
+        const kn = { first: "一", second: "二", second_extend: "二延", third: "三", second_class: "类二", third_class: "类三", td9: "TD9" }[s.kind] || s.kind;
+        return lv + kn + (s.side === "BUY" ? "买" : "卖");
+      }
+    },
     data: signals.map(s => ({
       value: [s.idx, s.price],
       chanSignalKind: "trade",
       chanSignalIdx: s.idx,
       chanSignalSide: s.side,
-      itemStyle: { color, borderColor: "#263238", borderWidth: 1.5 },
+      sig: { kind: s.kind, level: s.level, side: s.side },
+      itemStyle: { color, borderColor: "#263238", borderWidth: 2 },
+    }))
+  };
+}
+
+function filteredSignalSeries(name, signals, symbolShape) {
+  const color = "rgba(255,255,255,0.35)";
+  return {
+    name, type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 12,
+    symbol: symbolShape, symbolSize: 16,
+    itemStyle: { color, borderColor: "rgba(255,255,255,0.15)", borderWidth: 1, opacity: 0.5 },
+    label: {
+      show: true,
+      position: signals[0]?.side === "BUY" ? "bottom" : "top",
+      distance: 6,
+      fontSize: 10,
+      fontWeight: 400,
+      color: "rgba(255,255,255,0.45)",
+      textBorderColor: "transparent",
+      formatter(p) {
+        const s = p.data?.sig;
+        if (!s) return "";
+        const lv = { bi: "笔", segment: "段", higher_bi: "上" }[s.level] || "";
+        const kn = { first: "一", second: "二", second_extend: "二延", third: "三", second_class: "类二", third_class: "类三", td9: "TD9" }[s.kind] || s.kind;
+        return lv + kn + (s.side === "BUY" ? "买" : "卖");
+      }
+    },
+    data: signals.map(s => ({
+      value: [s.idx, s.price],
+      chanSignalKind: "trade",
+      chanSignalIdx: s.idx,
+      chanSignalSide: s.side,
+      sig: { kind: s.kind, level: s.level, side: s.side },
+      itemStyle: { color, borderColor: "rgba(255,255,255,0.15)", borderWidth: 1, opacity: 0.5 },
     }))
   };
 }
@@ -280,6 +339,7 @@ export function render(result) {
   const macdBars = result.macd_data.map(m => m.hist);
   const dif = result.macd_data.map(m => m.dif);
   const dea = result.macd_data.map(m => m.dea);
+  const macdData = result.macd_data;
   const series = [
     {
       name: "K线", type: "candlestick", data: candles, xAxisIndex: 0, yAxisIndex: 0, z: 3,
@@ -302,23 +362,48 @@ export function render(result) {
     if (pauseS) series.push(pauseS);
   }
   series.push(...fractalSeries(result.fractals));
-  series.push(signalSeries("买点", result.buy_signals, CHART_PALETTE.signalBuy, "triangle"));
-  series.push(signalSeries("卖点", result.sell_signals, CHART_PALETTE.signalSell, "pin"));
+  {
+    const buys = result.buy_signals || [];
+    const sells = result.sell_signals || [];
+    // Separate normal vs rr_filtered signals
+    const normalBuys = buys.filter(s => !s.rr_filtered);
+    const filteredBuys = buys.filter(s => s.rr_filtered);
+    const normalSells = sells.filter(s => !s.rr_filtered);
+    const filteredSells = sells.filter(s => s.rr_filtered);
+
+    const biBuys = normalBuys.filter(s => s.level === "bi");
+    const segBuys = normalBuys.filter(s => s.level === "segment");
+    const biSells = normalSells.filter(s => s.level === "bi");
+    const segSells = normalSells.filter(s => s.level === "segment");
+    // 段中枢未选中时不展示段级信号
+    const showSeg = document.getElementById("showZhongshuSeg")?.checked !== false;
+    if (biBuys.length) series.push(signalSeries("笔级买点", biBuys, CHART_PALETTE.signalBuy, "triangle"));
+    if (showSeg && segBuys.length) series.push(signalSeries("段级买点", segBuys, CHART_PALETTE.signalBuySegment, "triangle"));
+    if (biSells.length) series.push(signalSeries("笔级卖点", biSells, CHART_PALETTE.signalSell, "pin"));
+    if (showSeg && segSells.length) series.push(signalSeries("段级卖点", segSells, CHART_PALETTE.signalSellSegment, "pin"));
+
+    // Filtered (RR < 1.5 / segment first / trend) — shown only when toggle is on
+    const showFiltered = document.getElementById("showFilteredSignals")?.checked === true;
+    if (showFiltered) {
+      const fBiBuys = filteredBuys.filter(s => s.level === "bi");
+      const fSegBuys = filteredBuys.filter(s => s.level === "segment");
+      const fBiSells = filteredSells.filter(s => s.level === "bi");
+      const fSegSells = filteredSells.filter(s => s.level === "segment");
+      if (fBiBuys.length || fSegBuys.length) series.push(filteredSignalSeries("过滤买点", [...fBiBuys, ...fSegBuys], "triangle"));
+      if (fBiSells.length || fSegSells.length) series.push(filteredSignalSeries("过滤卖点", [...fBiSells, ...fSegSells], "pin"));
+    }
+  }
   if (result.divergences && result.divergences.length) {
     series.push(divergenceScatterSeries(result.divergences));
   }
-  series.push(strokeSeries("上级笔", result.bis_lv2, times.length, CHART_PALETTE.higherBi, 2, true));
   if (biPivots.length) {
     series.push(pivotSeries("笔中枢带", biPivots, CHART_PALETTE.pivotBi));
   }
   if (segmentPivots.length) {
     series.push(pivotSeries("线段中枢带", segmentPivots, CHART_PALETTE.pivotSegment));
   }
-  if (result.zhongshus_lv2 && result.zhongshus_lv2.length) {
-    series.push(pivotSeries("上级中枢", result.zhongshus_lv2, CHART_PALETTE.pivotHigher));
-  }
   {
-    const sp = segmentPolylineSeries("线段", result.segments, result.bis, times.length, CHART_PALETTE.segment, 4);
+    const sp = segmentSeries("线段", result.segments, times.length, CHART_PALETTE.segment, 4);
     if (sp) series.push(sp);
   }
   const boll = result.bollinger || [];
@@ -333,11 +418,29 @@ export function render(result) {
   }
   series.push({
     name: "MACD", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: macdBars,
-    itemStyle: { color: value => value.data >= 0 ? CHART_PALETTE.macdPos : CHART_PALETTE.macdNeg }
+    itemStyle: { color: value => value.data >= 0 ? CHART_PALETTE.macdPos : CHART_PALETTE.macdNeg },
+    markLine: {
+      silent: true, symbol: "none",
+      lineStyle: { color: "rgba(255,255,255,.08)", width: 1, type: "dashed" },
+      data: [{ yAxis: 0 }],
+    }
   });
+  // MACD 当前值标注
+  const lastMacd = macdData.length ? macdData[macdData.length - 1] : null;
+  const macdLabel = lastMacd ? `MACD(12,26,9)  DIF ${Number(lastMacd.dif).toFixed(2)}  DEA ${Number(lastMacd.dea).toFixed(2)}  柱 ${Number(lastMacd.hist).toFixed(2)}` : "MACD(12,26,9)";
   series.push({
     name: "DIF", type: "line", xAxisIndex: 1, yAxisIndex: 1, data: dif, symbol: "none",
     lineStyle: { color: CHART_PALETTE.dif, width: 1.5 },
+    markArea: {
+      silent: true, data: [[
+        { xAxis: "start", yAxis: "max", itemStyle: { color: "transparent" } },
+        { xAxis: "end", yAxis: "max" },
+      ]],
+      label: {
+        show: true, position: "insideTopLeft", fontSize: 10, fontWeight: 600,
+        color: "rgba(209,214,224,.62)", formatter: macdLabel,
+      }
+    },
     markLine: {
       silent: true, symbol: "none",
       lineStyle: { color: CHART_PALETTE.zeroLine, width: 1, type: "dashed" },
@@ -348,11 +451,53 @@ export function render(result) {
   series.push({ name: "DEA", type: "line", xAxisIndex: 1, yAxisIndex: 1, data: dea, symbol: "none", lineStyle: { color: CHART_PALETTE.dea, width: 1.5 } });
   const rsiA = result.rsi14 || [];
   if (rsiA.length === times.length) {
+    const lastRsi = rsiA.length ? rsiA[rsiA.length - 1] : null;
+    const rsiLabel = lastRsi != null ? `RSI(14)  ${Number(lastRsi).toFixed(1)}` : "RSI(14)";
     series.push({
       name: "RSI14", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: rsiA, symbol: "none",
       lineStyle: { color: CHART_PALETTE.rsiLine, width: 1.2 },
-      markLine: { silent: true, symbol: "none", lineStyle: { color: "rgba(255,255,255,.2)", type: "dashed" }, data: [{ yAxis: 70 }, { yAxis: 30 }] }
+      markLine: { silent: true, symbol: "none", lineStyle: { color: "rgba(255,255,255,.2)", type: "dashed" }, data: [{ yAxis: 70 }, { yAxis: 30 }] },
+      markArea: {
+        silent: true, data: [[
+          { xAxis: "start", yAxis: "max", itemStyle: { color: "transparent" } },
+          { xAxis: "end", yAxis: "max" },
+        ]],
+        label: {
+          show: true, position: "insideTopLeft", fontSize: 10, fontWeight: 600,
+          color: "rgba(209,214,224,.62)", formatter: rsiLabel,
+        }
+      },
     });
+  }
+
+  // Backtest trade overlay
+  const showBt = document.getElementById("showBtOverlay")?.checked && state.backtestTrades?.length;
+  if (showBt) {
+    const timeMap = {};
+    times.forEach((t, i) => { timeMap[t] = i; });
+    const btBuy = [], btSell = [];
+    for (const tr of state.backtestTrades) {
+      const idx = timeMap[tr.time];
+      if (idx == null) continue;
+      const pt = { value: [idx, tr.price], chanSignalKind: "trade", chanSignalIdx: idx };
+      if (tr.action === "BUY") btBuy.push(pt); else btSell.push(pt);
+    }
+    if (btBuy.length) {
+      series.push({
+        name: "回测买入", type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 14,
+        symbol: "triangle", symbolSize: 16,
+        itemStyle: { color: "#00e676", borderColor: "#1b5e20", borderWidth: 2 },
+        data: btBuy,
+      });
+    }
+    if (btSell.length) {
+      series.push({
+        name: "回测卖出", type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 14,
+        symbol: "path://M0,0 L8,0 L4,8 Z", symbolSize: 16,
+        itemStyle: { color: "#ff1744", borderColor: "#b71c1c", borderWidth: 2 },
+        data: btSell,
+      });
+    }
   }
 
   const subCompact = document.getElementById("compactSubplots")?.checked === true;
@@ -364,14 +509,14 @@ export function render(result) {
   }
   const chartGrids = subCompact
     ? [
-        { left: 48, right: 68, top: 28, height: "58%" },
-        { left: 48, right: 68, top: "67%", height: "9%" },
-        { left: 48, right: 68, top: "78%", height: "9%" },
+        { left: 48, right: 68, top: 28, height: "62%" },
+        { left: 48, right: 68, top: "66%", height: "12%" },
+        { left: 48, right: 68, top: "80%", height: "10%" },
       ]
     : [
-        { left: 50, right: 70, top: 46, height: "46%" },
-        { left: 50, right: 70, top: "60%", height: "10%" },
-        { left: 50, right: 70, top: "72%", height: "10%" },
+        { left: 50, right: 70, top: 42, height: "52%" },
+        { left: 50, right: 70, top: "57%", height: "14%" },
+        { left: 50, right: 70, top: "73%", height: "12%" },
       ];
 
   state.chart.setOption({

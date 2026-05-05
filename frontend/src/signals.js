@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { KIND_NAME } from "./constants.js";
+import { KIND_NAME, SIGNAL_LEVEL_LABEL } from "./constants.js";
 import { escHtml } from "./utils.js";
 import { updateVisiblePriceScale } from "./zoom.js";
 import { setRiskEntryPrice } from "./dom-fill.js";
@@ -43,7 +43,7 @@ export function attachChartSignalClickHandlers(chart) {
         return;
       }
     }
-    if ((name === "买点" || name === "卖点") && Array.isArray(params.value)) {
+    if ((name.includes("买点") || name.includes("卖点")) && Array.isArray(params.value)) {
       const idx = Number(params.value[0]);
       if (Number.isFinite(idx)) {
         navigateToSignal(idx);
@@ -80,21 +80,40 @@ export function renderSignals(result) {
       `<div class="muted">工具栏已关闭「买卖点」图层：图上与列表均隐藏；勾选后即可查看。</div>`;
     return;
   }
-  const signals = [...result.buy_signals, ...result.sell_signals].sort((a, b) => b.idx - a.idx);
-  if (!signals.length) {
+  const allSignals = [...result.buy_signals, ...result.sell_signals].sort((a, b) => b.idx - a.idx);
+  const showFiltered = document.getElementById("showFilteredSignals")?.checked === true;
+  const signals = showFiltered ? allSignals : allSignals.filter(s => !s.rr_filtered);
+  if (!signals.length && !allSignals.length) {
     el.innerHTML = `<div class="muted">当前列表为空：多为<strong>结构不足以程序判定买卖点</strong>；若刚切换图层，请确认「买卖点」已勾选。</div>`;
     return;
   }
-  const block = signal => `
+  if (!signals.length && allSignals.length) {
+    el.innerHTML = `<div class="muted">${allSignals.length} 条信号被过滤（盈亏比不足或趋势不符）。勾选「含过滤信号」可查看。</div>`;
+    return;
+  }
+  const block = signal => {
+    const filteredTag = signal.rr_filtered ? '<span style="color:rgba(255,255,255,0.4);font-size:10px;margin-left:4px;">(过滤)</span>' : '';
+    let sltpHtml = "";
+    if (signal.stop_loss != null || signal.take_profit_1 != null || signal.take_profit != null) {
+      const slLabel = signal.level === "segment" ? "SL(段)" : "SL";
+      const slHtml = signal.stop_loss != null ? `<span>${slLabel}: <b style="color:#ff6e40">${Number(signal.stop_loss).toFixed(2)}</b></span>` : "";
+      const sl2Html = signal.stop_loss_2 != null ? `<span>SL(笔): <b style="color:#ffab40">${Number(signal.stop_loss_2).toFixed(2)}</b></span>` : "";
+      const tp1Html = signal.take_profit_1 != null ? `<span>TP1: <b style="color:#69ff9e">${Number(signal.take_profit_1).toFixed(2)}</b></span>` : "";
+      const tp2Html = signal.take_profit != null ? `<span>TP2: <b style="color:#69ff9e">${Number(signal.take_profit).toFixed(2)}</b></span>` : "";
+      sltpHtml = `<p style="font-size:11px;display:flex;gap:10px;flex-wrap:wrap;">${slHtml}${sl2Html}${tp1Html}${tp2Html}</p>`;
+    }
+    return `
     <div class="signal ${signal.side === "BUY" ? "buy" : "sell"}" data-signal-idx="${signal.idx}" style="cursor:pointer" title="点击跳转到图表对应位置">
       <div class="signal-head">
-        <span><span class="pill ${signal.side === "BUY" ? "buy" : "sell"}">${signal.side === "BUY" ? "BUY" : "SELL"}</span> ${KIND_NAME[signal.kind] || signal.kind}${signal.side === "BUY" ? "买点" : "卖点"}</span>
+        <span><span class="pill ${signal.side === "BUY" ? "buy" : "sell"}">${signal.side === "BUY" ? "BUY" : "SELL"}</span> ${SIGNAL_LEVEL_LABEL[signal.level] || signal.level} ${KIND_NAME[signal.kind] || signal.kind}${signal.side === "BUY" ? "买" : "卖"}${filteredTag}</span>
         <span>${Number(signal.price).toFixed(2)}</span>
       </div>
       <p>${escHtml(signal.time)}｜${escHtml(signal.description)}</p>
       ${signal.evidence ? `<p>依据：${escHtml(signal.evidence)}</p>` : ""}
+      ${sltpHtml}
     </div>
   `;
+  };
   const head = 4;
   const vis = signals.slice(0, head);
   const rest = signals.slice(head);

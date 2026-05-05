@@ -5,4 +5,5 @@ export const state = {
   visibleScaleUpdateDepth: 0,
   dataZoomScaleTimer: null,
   glmVerdictAbortController: null,
+  backtestTrades: null,  // trade_log from last backtest
 };

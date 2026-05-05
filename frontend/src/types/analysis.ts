@@ -74,7 +74,10 @@ export interface Signal {
   evidence?: string;
   open_time?: number;
   stop_loss?: number;
+  /** 段级第二止损（笔中枢侧），可与 `stop_loss` 并存 */
+  stop_loss_2?: number;
   take_profit?: number;
+  take_profit_1?: number;
   risk_reward_ratio?: number;
 }
 
@@ -127,7 +130,17 @@ export interface ActionFocus {
     macd_ratio?: number;
     structure_kind?: string;
   } | null;
-  recent_signal?: { kind: string; side: string; idx: number; time: string; price?: number } | null;
+  recent_signal?: {
+    kind: string;
+    side: string;
+    idx: number;
+    time: string;
+    price?: number;
+    stop_loss?: number | null;
+    stop_loss_2?: number | null;
+    take_profit_1?: number | null;
+    take_profit_2?: number | null;
+  } | null;
 }
 
 export interface AdvancedContext {
@@ -232,10 +245,28 @@ export interface BacktestRequest {
   symbol: string;
   /** 与后端一致：字符串周期码，如 `"60"`、`"240"` */
   interval: string | number;
-  max_bars: number;
   strategy: string;
   fee_bps: number;
   initial_equity: number;
+  leverage?: number;
+  /** 每笔固定保证金（USDT）；不传则全仓复利 */
+  trade_amount_usdt?: number;
+  start_time_ms?: number;
+  end_time_ms?: number;
+}
+
+/** `QuickBacktestTrade`：撮合明细（含信号预估 SL/TP） */
+export interface BacktestExecTrade {
+  bar_idx: number;
+  time: string;
+  action: "BUY" | "SELL";
+  price: number;
+  equity_after: number;
+  exit_reason?: string;
+  quantity?: number;
+  stop_loss?: number | null;
+  take_profit_1?: number | null;
+  take_profit_2?: number | null;
 }
 
 export interface BacktestKindStat {
@@ -278,6 +309,9 @@ export interface BacktestResult {
   max_consecutive_losses?: number;
   avg_win_usdt?: number;
   avg_loss_usdt?: number;
+  stop_loss_hits?: number;
+  /** 后端 `trade_log`：每笔开/平动作 */
+  trade_log?: BacktestExecTrade[];
   closed_trades?: BacktestClosedTrade[];
   stats_by_signal_kind?: Record<string, BacktestKindStat>;
   recent_trades?: Array<{

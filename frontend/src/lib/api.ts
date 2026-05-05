@@ -6,6 +6,7 @@ import type {
   PaperTradeRecord,
   BacktestRequest,
   BacktestResult,
+  BacktestExecTrade,
   SymbolOption,
 } from "@/types/analysis";
 
@@ -67,10 +68,27 @@ export async function postRiskPositionSize(params: PositionSizeRequest): Promise
   const res = await fetch(`${apiPrefix()}/risk/position-size`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      equity_usdt: params.equity,
+      risk_fraction: params.risk_fraction,
+      entry_price: params.entry_price,
+      stop_price: params.stop_price,
+      leverage: params.leverage ?? 1,
+      maint_margin_rate: params.maint_margin_rate,
+    }),
   });
   if (!res.ok) throw new Error(`风控计算失败: ${res.status}`);
-  return res.json();
+  const raw = (await res.json()) as Record<string, unknown>;
+  return {
+    quantity: Number(raw.suggested_quantity ?? 0),
+    notional: Number(raw.notional_usdt ?? 0),
+    risk_amount: Number(raw.risk_usdt ?? 0),
+    leverage: Number(raw.leverage ?? 1),
+    required_margin: raw.required_margin != null ? Number(raw.required_margin) : undefined,
+    liquidation_price: raw.liquidation_price != null ? Number(raw.liquidation_price) : undefined,
+    effective_risk_pct: raw.effective_risk_pct != null ? Number(raw.effective_risk_pct) : undefined,
+    warnings: Array.isArray(raw.warnings) ? (raw.warnings as string[]) : [],
+  };
 }
 
 export async function postPaperTrade(params: PaperTradeRequest): Promise<PaperTradeRecord> {
@@ -121,6 +139,26 @@ export function normalizeQuickBacktest(raw: Record<string, unknown>): BacktestRe
     };
   });
 
+  const logRaw = raw.trade_log;
+  const trade_log: BacktestExecTrade[] = Array.isArray(logRaw)
+    ? logRaw.map((row) => {
+        const r = row as Record<string, unknown>;
+        const act = String(r.action ?? "").toUpperCase();
+        return {
+          bar_idx: Number(r.bar_idx ?? 0),
+          time: String(r.time ?? ""),
+          action: act === "SELL" ? "SELL" : "BUY",
+          price: Number(r.price ?? 0),
+          equity_after: Number(r.equity_after ?? 0),
+          exit_reason: r.exit_reason != null ? String(r.exit_reason) : undefined,
+          quantity: r.quantity != null ? Number(r.quantity) : undefined,
+          stop_loss: r.stop_loss != null ? Number(r.stop_loss) : undefined,
+          take_profit_1: r.take_profit_1 != null ? Number(r.take_profit_1) : undefined,
+          take_profit_2: r.take_profit_2 != null ? Number(r.take_profit_2) : undefined,
+        };
+      })
+    : [];
+
   return {
     success: raw.success !== false,
     disclaimer: typeof raw.disclaimer === "string" ? raw.disclaimer : undefined,
@@ -140,24 +178,37 @@ export function normalizeQuickBacktest(raw: Record<string, unknown>): BacktestRe
       m?.max_consecutive_losses != null ? Number(m.max_consecutive_losses) : undefined,
     avg_win_usdt: m?.avg_win_usdt != null ? Number(m.avg_win_usdt) : undefined,
     avg_loss_usdt: m?.avg_loss_usdt != null ? Number(m.avg_loss_usdt) : undefined,
+    stop_loss_hits: m?.stop_loss_hits != null ? Number(m.stop_loss_hits) : undefined,
     closed_trades,
+    trade_log,
     stats_by_signal_kind,
   };
 }
 
 export async function postBacktestQuick(params: BacktestRequest): Promise<BacktestResult> {
+  const body: Record<string, unknown> = {
+    market: "crypto",
+    symbol: params.symbol,
+    interval: String(params.interval),
+    strategy: params.strategy,
+    fee_bps: params.fee_bps,
+    initial_equity_usdt: params.initial_equity,
+    leverage: params.leverage ?? 1,
+  };
+  if (params.trade_amount_usdt != null && params.trade_amount_usdt > 0) {
+    body.trade_amount_usdt = params.trade_amount_usdt;
+  }
+  if (params.start_time_ms != null && Number.isFinite(params.start_time_ms)) {
+    body.start_time_ms = Math.floor(params.start_time_ms);
+  }
+  if (params.end_time_ms != null && Number.isFinite(params.end_time_ms)) {
+    body.end_time_ms = Math.floor(params.end_time_ms);
+  }
+
   const res = await fetch(`${apiPrefix()}/backtest/quick`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      market: "crypto",
-      symbol: params.symbol,
-      interval: String(params.interval),
-      max_bars: params.max_bars,
-      strategy: params.strategy,
-      fee_bps: params.fee_bps,
-      initial_equity_usdt: params.initial_equity,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`回测失败: ${res.status}`);
   const raw = (await res.json()) as Record<string, unknown>;

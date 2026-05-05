@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useMemo } from "react";
 import * as echarts from "echarts";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useBacktestOverlayStore } from "@/stores/backtest-overlay-store";
 import { buildChartOption, buildErrorOption } from "./chart-options";
 import { chartIsDisposed, updateVisiblePriceScale, navigateToSignal } from "@/lib/echarts-helpers";
 
@@ -11,7 +12,11 @@ export function EChartsChart() {
   const zoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastResult = useAnalysisStore((s) => s.lastResult);
   const error = useAnalysisStore((s) => s.error);
-  const { layers, compactSubplots } = useSettingsStore();
+  const { layers, compactSubplots, symbol, interval } = useSettingsStore();
+  const btShow = useBacktestOverlayStore((s) => s.showOverlay);
+  const btLog = useBacktestOverlayStore((s) => s.tradeLog);
+  const btSym = useBacktestOverlayStore((s) => s.symbol);
+  const btIv = useBacktestOverlayStore((s) => s.interval);
 
   // Init chart + click routing (same lifecycle — StrictMode-safe)
   useEffect(() => {
@@ -71,8 +76,30 @@ export function EChartsChart() {
   const option = useMemo(() => {
     if (error) return buildErrorOption(error);
     if (!lastResult) return null;
-    return buildChartOption(lastResult, { layers, compactSubplots });
-  }, [lastResult, layers, compactSubplots, error]);
+    return buildChartOption(lastResult, {
+      layers,
+      compactSubplots,
+      backtestOverlay: {
+        show: btShow,
+        trades: btLog,
+        btSymbol: btSym ?? "",
+        btInterval: btIv ?? "",
+        chartSymbol: symbol,
+        chartInterval: interval,
+      },
+    });
+  }, [
+    lastResult,
+    layers,
+    compactSubplots,
+    error,
+    btShow,
+    btLog,
+    btSym,
+    btIv,
+    symbol,
+    interval,
+  ]);
 
   useEffect(() => {
     const chart = chartRef.current;

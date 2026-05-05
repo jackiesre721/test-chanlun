@@ -1,4 +1,4 @@
-import type { AnalyzeResult, Stroke, Fractal, Divergence, Pivot } from "@/types/analysis";
+import type { AnalyzeResult, Stroke, Fractal, Divergence, Pivot, KlineBar, BacktestExecTrade } from "@/types/analysis";
 import { CHART_PALETTE, ANALYZE_LIMIT } from "@/constants/chart-palette";
 import { LAYER_SERIES_MAP, type LayerState } from "@/constants/layer-presets";
 import { fmtOpenTime } from "@/lib/format";
@@ -6,6 +6,15 @@ import { fmtOpenTime } from "@/lib/format";
 export interface ChartSettings {
   layers: LayerState;
   compactSubplots: boolean;
+  /** 主图叠加最近一次演示回测成交（品种+周期须与当前图表一致） */
+  backtestOverlay?: {
+    show: boolean;
+    trades: BacktestExecTrade[];
+    btSymbol: string;
+    btInterval: string;
+    chartSymbol: string;
+    chartInterval: string;
+  };
 }
 
 // ── helpers ──
@@ -151,6 +160,64 @@ function signalScatter(name: string, signals: AnalyzeResult["buy_signals"], colo
   };
 }
 
+function resolveBacktestXIndex(klines: KlineBar[], t: BacktestExecTrade): number {
+  const len = klines.length;
+  const bi = Number(t.bar_idx);
+  if (bi >= 0 && bi < len) {
+    const k = klines[bi];
+    const tt = t.time;
+    if (!tt) return bi;
+    if (String(k.time) === tt) return bi;
+    if (k.open_time != null && fmtOpenTime(k.open_time) === tt) return bi;
+  }
+  if (t.time) {
+    const byTime = klines.findIndex((k) => String(k.time) === t.time);
+    if (byTime >= 0) return byTime;
+    const byFmt = klines.findIndex(
+      (k) => k.open_time != null && fmtOpenTime(k.open_time) === t.time,
+    );
+    if (byFmt >= 0) return byFmt;
+  }
+  return bi >= 0 && bi < len ? bi : -1;
+}
+
+function buildBacktestOverlaySeries(trades: BacktestExecTrade[], klines: KlineBar[]) {
+  const buys: { value: [number, number] }[] = [];
+  const sells: { value: [number, number] }[] = [];
+  for (const t of trades) {
+    const xi = resolveBacktestXIndex(klines, t);
+    if (xi < 0 || !Number.isFinite(t.price)) continue;
+    const item = { value: [xi, t.price] as [number, number] };
+    if (t.action === "BUY") buys.push(item);
+    else sells.push(item);
+  }
+  return [
+    {
+      name: "回测·买",
+      type: "scatter",
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      z: 14,
+      symbol: "triangle",
+      symbolSize: 12,
+      itemStyle: { color: "#69f0ae", borderColor: "#1b5e20", borderWidth: 1 },
+      data: buys,
+    },
+    {
+      name: "回测·卖",
+      type: "scatter",
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      z: 14,
+      symbol: "pin",
+      symbolRotate: 180,
+      symbolSize: 12,
+      itemStyle: { color: "#ff8a80", borderColor: "#b71c1c", borderWidth: 1 },
+      data: sells,
+    },
+  ];
+}
+
 function linesFormGraphic(result: AnalyzeResult) {
   const lf = result.lines_form;
   if (!lf?.primary) return [];
@@ -231,6 +298,21 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
   for (const [key, names] of Object.entries(LAYER_SERIES_MAP)) {
     const checked = settings.layers[key as keyof typeof settings.layers] ?? true;
     for (const n of names) legendSelected[n] = checked;
+  }
+
+  const bo = settings.backtestOverlay;
+  const symEq =
+    bo != null &&
+    bo.btSymbol.trim().toUpperCase() === bo.chartSymbol.trim().toUpperCase();
+  const overlayAlign =
+    bo?.show &&
+    bo.trades.length > 0 &&
+    symEq &&
+    String(bo.btInterval) === String(bo.chartInterval);
+  if (overlayAlign) {
+    series.push(...buildBacktestOverlaySeries(bo.trades, result.kline_data));
+    legendSelected["回测·买"] = true;
+    legendSelected["回测·卖"] = true;
   }
 
   const subC = settings.compactSubplots;

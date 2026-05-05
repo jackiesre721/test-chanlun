@@ -88,6 +88,20 @@ function buildFocusHtml(result: AnalyzeResult): string[] | null {
     lines.push(
       `最近信号：${rs.side} ${rs.kind} @ ${p != null ? fmtPx(p) : "—"}（idx=${rs.idx}）`,
     );
+    const extras: string[] = [];
+    if (rs.stop_loss != null && Number.isFinite(Number(rs.stop_loss))) {
+      extras.push(`止损 <b>${fmtPx(rs.stop_loss)}</b>`);
+    }
+    if (rs.stop_loss_2 != null && Number.isFinite(Number(rs.stop_loss_2))) {
+      extras.push(`止损(笔) <b>${fmtPx(rs.stop_loss_2)}</b>`);
+    }
+    if (rs.take_profit_1 != null && Number.isFinite(Number(rs.take_profit_1))) {
+      extras.push(`止盈1（1:1）<b>${fmtPx(rs.take_profit_1)}</b>`);
+    }
+    if (rs.take_profit_2 != null && Number.isFinite(Number(rs.take_profit_2))) {
+      extras.push(`止盈2 <b>${fmtPx(rs.take_profit_2)}</b>`);
+    }
+    if (extras.length) lines.push(extras.join(" ｜ "));
   } else {
     lines.push("当前无可操作信号 — 非投资建议");
   }

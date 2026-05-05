@@ -574,6 +574,30 @@ class QuickBacktestTrade(BaseModel):
     equity_after: float
 
 
+class QuickBacktestRoundTrip(BaseModel):
+    """一笔完整平仓回合（开仓 → 空仓），用于胜率 / 期望值 / 按信号分类统计。"""
+
+    entry_bar_idx: int
+    exit_bar_idx: int
+    entry_time: str
+    exit_time: str
+    entry_price: float
+    exit_price: float
+    side: Literal["LONG", "SHORT"]
+    pnl_usdt: float
+    pnl_pct: float
+    bars_held: int
+    signal_kind_at_entry: str
+
+
+class QuickBacktestKindStat(BaseModel):
+    count: int
+    wins: int
+    losses: int
+    win_rate: float
+    avg_pnl_usdt: float
+
+
 class QuickBacktestMetrics(BaseModel):
     bars_used: int
     trades: int
@@ -581,6 +605,13 @@ class QuickBacktestMetrics(BaseModel):
     total_return_fraction: float
     max_drawdown_fraction: float
     sharpe_naive: Optional[float] = None
+    closed_trade_count: int = 0
+    win_rate: Optional[float] = None
+    profit_factor: Optional[float] = None
+    expectancy_per_trade_usdt: Optional[float] = None
+    max_consecutive_losses: int = 0
+    avg_win_usdt: Optional[float] = None
+    avg_loss_usdt: Optional[float] = None
 
 
 class QuickBacktestResponse(BaseModel):
@@ -590,6 +621,8 @@ class QuickBacktestResponse(BaseModel):
     )
     metrics: QuickBacktestMetrics
     trade_log: list[QuickBacktestTrade]
+    closed_trades: list[QuickBacktestRoundTrip] = Field(default_factory=list)
+    stats_by_signal_kind: dict[str, QuickBacktestKindStat] = Field(default_factory=dict)
 
 
 class PaperOrderRequest(BaseModel):

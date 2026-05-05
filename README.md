@@ -20,10 +20,20 @@ uvicorn app.main:app --reload
 
 打开 `http://127.0.0.1:8000`。
 
+### 前端源码（`frontend/`）
+
+- **本地开发**：后端先启动 `uvicorn`（默认 `127.0.0.1:8000`），再执行  
+  `cd frontend && npm ci && npm run dev`  
+  用 Vite 开发服务器打开页面（默认 `5173`）；`/analyze`、`/api`、`/trade`、`/risk` 等由 `vite.config.js` **代理**到后端。
+- **集成静态资源**：`cd frontend && npm ci && npm run build` → 产出到 **`static_dist/`**。运行后端时设置  
+  **`CHANLAN_STATIC_DIR=static_dist`**（或写入 `.env`），根路径 `/` 即托管构建后的 UI（默认 `CHANLAN_STATIC_DIR=static` 为仓库内 legacy `static/`）。
+- 侧栏含 **交易纪律 / 演示回测 / 头寸试算**：对照规则版本做样本外自检；演示回测含 `fee_bps`，仍非实盘仿真。
+
 ## 本地持久化（默认）
 
 - **模拟盘** `POST /trade/paper`：SQLite（默认 `.cache/chanlan/paper_orders.sqlite`，可用 `CHANLAN_PAPER_ORDERS_DB_PATH`）。
 - **分析缓存**：命中相同锚点时跳过远程拉取与重算（默认 `.cache/analyze/`，可用 `CHANLAN_ANALYZE_DISK_CACHE_ENABLED=false` 关闭）。
+- **PostgreSQL（可选）**：设置 `CHANLAN_DATABASE_URL`（如 `postgresql+asyncpg://user:pass@localhost:5432/chanlan`）后启用 PG K 线缓存；需要 Binance WS 回填时再设 **`CHANLAN_SYNC_ENABLED=true`**（无库或未配置 URL 时不要开启）。
 
 ## API
 

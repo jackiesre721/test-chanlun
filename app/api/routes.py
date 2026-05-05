@@ -20,7 +20,6 @@ from app.core.models import (
     PositionSizingResponse,
     QuickBacktestRequest,
     QuickBacktestResponse,
-    SUPPORTED_SYMBOLS,
     SymbolResponse,
     TrailingStopRequest,
     TrailingStopResponse,
@@ -32,6 +31,7 @@ from app.services.ai_glm_verdict import verdict_from_analyze_payload
 from app.services.ai_structure_hint import structure_hint
 from app.services.backtest_quick import run_quick_backtest
 from app.services.risk_controls import compute_position_size, compute_trailing_stop
+from app.services import symbol_registry
 from app.trading.paper_orders import recent_orders, record_paper_order
 
 router = APIRouter()
@@ -49,7 +49,10 @@ async def symbols(
 ) -> SymbolResponse:
     if market != "crypto":
         return SymbolResponse(symbols=[])
-    return SymbolResponse(symbols=sorted(SUPPORTED_SYMBOLS))
+    return SymbolResponse(
+        symbols=sorted(symbol_registry.get_symbols()),
+        registry_degraded=symbol_registry.is_registry_degraded(),
+    )
 
 
 @router.post("/tools/aggregate-bars", response_model=BarAggregateResponse)
@@ -127,14 +130,6 @@ def trade_paper(payload: PaperOrderRequest) -> PaperOrderResponse:
 def trade_paper_recent(limit: int = 50) -> dict[str, object]:
     capped = max(1, min(limit, 200))
     return {"orders": recent_orders(capped)}
-
-
-@router.post("/trade/live", response_model=None)
-def trade_live() -> None:
-    raise HTTPException(
-        status_code=403,
-        detail="Live execution not implemented / disabled. Do not enable CHANLAN_LIVE_TRADING_ENABLED without a signed exchange integration.",
-    )
 
 
 @router.post("/ai/structure-hint", response_model=AiStructureHintResponse)

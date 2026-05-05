@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -14,6 +16,7 @@ from app.core.config import settings
 from app.core.errors import MarketDataError
 from app.core.models import Candle
 
+log = logging.getLogger(__name__)
 
 BINANCE_INTERVALS = {
     "1": "1m",
@@ -22,6 +25,16 @@ BINANCE_INTERVALS = {
     "60": "1h",
     "240": "4h",
     "1440": "1d",
+}
+
+# Internal interval code -> candle width in milliseconds
+_INTERVAL_MS = {
+    "1": 60_000,
+    "15": 900_000,
+    "30": 1_800_000,
+    "60": 3_600_000,
+    "240": 14_400_000,
+    "1440": 86_400_000,
 }
 
 BINANCE_BASE_URLS = (
@@ -33,10 +46,19 @@ BINANCE_BASE_URLS = (
 
 
 class BinanceRepository:
-    """Read-only Binance market data access."""
+    """Read-only Binance market data access with optional PG cache."""
 
-    def __init__(self, base_url: str = settings.binance_base_url) -> None:
+    def __init__(
+        self,
+        base_url: str = settings.binance_base_url,
+        pg_session_factory: Any = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._pg_factory = pg_session_factory
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     async def get_klines(
         self,
@@ -49,6 +71,140 @@ class BinanceRepository:
         if binance_interval is None:
             raise MarketDataError(f"Unsupported interval: {interval}")
 
+        if self._pg_factory:
+            candles = await self._get_klines_from_pg(symbol, interval, limit, end_time_ms)
+            if len(candles) == limit:
+                return candles
+
+        candles = await self._fetch_klines_from_binance(symbol, interval, limit, end_time_ms)
+
+        if self._pg_factory and candles:
+            asyncio.create_task(self._persist_klines(symbol, interval, candles))
+
+        return candles
+
+    async def get_klines_history(self, symbol: str, interval: str, max_bars: int) -> list[Candle]:
+        target = max(1, min(max_bars, settings.backtest_max_bars))
+
+        if self._pg_factory:
+            pg_candles = await self._get_klines_from_pg(symbol, interval, target)
+            if len(pg_candles) >= target:
+                freshness_ms = _INTERVAL_MS.get(interval, 60_000) * 2
+                latest = pg_candles[-1].open_time
+                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                if now_ms - latest <= freshness_ms:
+                    return pg_candles[-target:]
+
+            if pg_candles:
+                tail = await self._fetch_tail_gap(symbol, interval, target, pg_candles)
+                return tail
+
+        merged = await self._paginate_binance(symbol, interval, target)
+
+        if self._pg_factory and merged:
+            asyncio.create_task(self._persist_klines(symbol, interval, merged))
+
+        return merged
+
+    async def get_symbols(self) -> list[str]:
+        data = await self._get_json("/api/v3/exchangeInfo", params=None)
+        symbols = [
+            item["symbol"]
+            for item in data.get("symbols", [])
+            if item.get("status") == "TRADING" and item.get("quoteAsset") == "USDT"
+        ]
+        return sorted(symbols)
+
+    # ------------------------------------------------------------------
+    # PG helpers
+    # ------------------------------------------------------------------
+
+    async def _get_klines_from_pg(
+        self, symbol: str, interval: str, limit: int, end_time_ms: Optional[int] = None
+    ) -> list[Candle]:
+        from app.db.kline_store import fetch_klines
+
+        try:
+            async with self._pg_factory() as session:
+                rows = await fetch_klines(session, symbol, BINANCE_INTERVALS[interval], limit, end_time_ms)
+        except Exception:
+            log.warning("PG read failed for %s/%s, falling back to Binance", symbol, interval, exc_info=True)
+            return []
+        return [self._row_to_candle(idx, r) for idx, r in enumerate(rows)]
+
+    async def _persist_klines(self, symbol: str, interval: str, candles: list[Candle]) -> None:
+        from app.db.kline_store import upsert_klines
+
+        bi = BINANCE_INTERVALS[interval]
+        rows = [(c.open_time, c.open, c.high, c.low, c.close, c.volume) for c in candles]
+        try:
+            async with self._pg_factory() as session:
+                n = await upsert_klines(session, symbol, bi, rows)
+                if n:
+                    log.info("PG upserted %d klines for %s/%s", n, symbol, bi)
+        except Exception:
+            log.warning("PG persist failed for %s/%s", symbol, bi, exc_info=True)
+
+    async def _fetch_tail_gap(
+        self, symbol: str, interval: str, target: int, pg_candles: list[Candle]
+    ) -> list[Candle]:
+        bi = BINANCE_INTERVALS[interval]
+        latest_pg_time = pg_candles[-1].open_time
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        gap_ms = now_ms - latest_pg_time
+        width_ms = _INTERVAL_MS.get(interval, 60_000)
+        gap_bars = min(int(gap_ms / width_ms) + 2, 1500)
+
+        if gap_bars <= 0:
+            return pg_candles[-target:]
+
+        tail = await self._fetch_klines_from_binance(symbol, interval, gap_bars)
+        if not tail:
+            return pg_candles[-target:]
+
+        if self._pg_factory:
+            asyncio.create_task(self._persist_klines(symbol, interval, tail))
+
+        combined = pg_candles + tail
+        seen: set[int] = set()
+        deduped: list[Candle] = []
+        for c in combined:
+            if c.open_time not in seen:
+                seen.add(c.open_time)
+                deduped.append(c)
+        deduped.sort(key=lambda c: c.open_time)
+        if len(deduped) > target:
+            deduped = deduped[-target:]
+        return [
+            c.model_copy(update={"source_idx": i, "high_idx": i, "low_idx": i})
+            for i, c in enumerate(deduped)
+        ]
+
+    @staticmethod
+    def _row_to_candle(idx: int, row: tuple) -> Candle:
+        open_time = int(row[0])
+        dt = datetime.fromtimestamp(open_time / 1000, tz=_DISPLAY_TZ)
+        return Candle(
+            open_time=open_time,
+            time=dt.strftime("%m-%d %H:%M"),
+            open=float(row[1]),
+            high=float(row[2]),
+            low=float(row[3]),
+            close=float(row[4]),
+            volume=float(row[5]),
+            source_idx=idx,
+            high_idx=idx,
+            low_idx=idx,
+        )
+
+    # ------------------------------------------------------------------
+    # Binance API helpers (unchanged logic, extracted)
+    # ------------------------------------------------------------------
+
+    async def _fetch_klines_from_binance(
+        self, symbol: str, interval: str, limit: int, end_time_ms: Optional[int] = None
+    ) -> list[Candle]:
+        binance_interval = BINANCE_INTERVALS[interval]
         params: dict[str, Any] = {"symbol": symbol, "interval": binance_interval, "limit": limit}
         if end_time_ms is not None:
             params["endTime"] = int(end_time_ms)
@@ -57,16 +213,14 @@ class BinanceRepository:
             raise MarketDataError("Unexpected kline response from Binance")
         return [self._parse_candle(idx, row) for idx, row in enumerate(data)]
 
-    async def get_klines_history(self, symbol: str, interval: str, max_bars: int) -> list[Candle]:
-        """分页拉取至多 max_bars 根 K 线（按时间升序，含当前最新一根）。"""
-        target = max(1, min(max_bars, settings.backtest_max_bars))
+    async def _paginate_binance(self, symbol: str, interval: str, target: int) -> list[Candle]:
         merged: list[Candle] = []
         end_before: Optional[int] = None
         seen_open_times: set[int] = set()
 
         while len(merged) < target:
             chunk_limit = min(settings.max_klines_limit, target - len(merged))
-            batch = await self.get_klines(symbol, interval, chunk_limit, end_time_ms=end_before)
+            batch = await self._fetch_klines_from_binance(symbol, interval, chunk_limit, end_time_ms=end_before)
             if not batch:
                 break
 
@@ -94,15 +248,6 @@ class BinanceRepository:
             candle.model_copy(update={"source_idx": idx, "high_idx": idx, "low_idx": idx})
             for idx, candle in enumerate(merged)
         ]
-
-    async def get_symbols(self) -> list[str]:
-        data = await self._get_json("/api/v3/exchangeInfo", params=None)
-        symbols = [
-            item["symbol"]
-            for item in data.get("symbols", [])
-            if item.get("status") == "TRADING" and item.get("quoteAsset") == "USDT"
-        ]
-        return sorted(symbols)
 
     async def _get_json(self, path: str, params: Optional[dict[str, Any]]) -> Any:
         last_error = "unknown error"

@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     analyze_disk_cache_dir: str = Field(default=".cache/analyze")
     analyze_disk_cache_max_files: int = Field(default=80, ge=0, le=10_000)
 
+    # 留空则仅用 Binance REST，不连库；填 postgres+asyncpg URL 时启用 PG K 线缓存与可选 WS 回填。
+    database_url: str = ""
+    db_pool_min_size: int = Field(default=2, ge=0)
+    db_pool_max_size: int = Field(default=5, ge=1)
+    sync_enabled: bool = Field(default=False)
+    sync_retention_days: int = Field(default=30, ge=1)
+    binance_ws_url: str = "wss://stream.binance.com:9443"
+    ws_reconnect_delay_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
+
+    # 静态文件目录：默认 static；设为 static_dist 可用 Vite 构建产物。
+    static_dir: str = "static_dist"
+
     model_config = SettingsConfigDict(env_prefix="CHANLAN_", env_file=".env", extra="ignore")
 
 

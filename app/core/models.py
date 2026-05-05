@@ -23,8 +23,6 @@ class SignalSide(str, Enum):
     SELL = "SELL"
 
 
-SUPPORTED_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
-
 # App-internal interval codes → Binance mapping lives in BinanceRepository.
 ALLOWED_ANALYSIS_INTERVALS = frozenset({"1", "15", "30", "60", "240", "1440"})
 
@@ -35,8 +33,9 @@ def normalize_supported_symbol(value: str) -> str:
         raise ValueError("symbol must be a non-empty trading pair")
     if not value.replace("-", "").replace("_", "").isalnum():
         raise ValueError("symbol contains unsupported characters")
-    if value not in SUPPORTED_SYMBOLS:
-        raise ValueError("symbol must be BTCUSDT or ETHUSDT")
+    from app.services.symbol_registry import is_supported
+    if not is_supported(value):
+        raise ValueError("symbol not in supported list")
     return value
 
 
@@ -649,3 +648,4 @@ AnalyzeResponse.model_rebuild()
 class SymbolResponse(BaseModel):
     success: bool = True
     symbols: list[str]
+    registry_degraded: bool = False

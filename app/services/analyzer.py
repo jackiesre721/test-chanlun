@@ -19,11 +19,12 @@ from app.services.analyze_disk_cache import load_cached_analyze_result, save_cac
 from app.services.analysis_pipeline import build_analyze_response
 
 HIGHER_INTERVAL = {
-    "1": "15",
-    "15": "30",
-    "30": "60",
-    "60": "240",
+    "1": "5",
+    "5": "30",
+    "30": "240",
     "240": "1440",
+    "1440": "10080",
+    "10080": "43200",
 }
 
 

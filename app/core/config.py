@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     app_name: str = "Chanlan"
     binance_base_url: str = "https://api.binance.com"
+    binance_futures_base_url: str = "https://fapi.binance.com"
     request_timeout_seconds: float = Field(default=12.0, gt=0)
     max_klines_limit: int = Field(default=1000, ge=100, le=1000)
     # /analyze 允许请求的合并 K 数量上限（Binance 单次最多 max_klines_limit，仓储侧会自动分页）。

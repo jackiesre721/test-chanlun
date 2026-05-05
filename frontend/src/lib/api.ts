@@ -89,14 +89,79 @@ export async function getPaperRecent(): Promise<PaperTradeRecord[]> {
   return res.json();
 }
 
+/** 将后端 `QuickBacktestResponse` 转为侧栏易用的扁平字段。 */
+export function normalizeQuickBacktest(raw: Record<string, unknown>): BacktestResult {
+  const m = raw.metrics as Record<string, unknown> | undefined;
+  const closedRaw = raw.closed_trades;
+  const closed = Array.isArray(closedRaw) ? closedRaw : [];
+
+  const total_ret_frac = m ? Number(m.total_return_fraction ?? 0) : 0;
+  const max_dd_frac = m ? Number(m.max_drawdown_fraction ?? 0) : 0;
+
+  const statsRaw = raw.stats_by_signal_kind;
+  const stats_by_signal_kind =
+    statsRaw && typeof statsRaw === "object" && statsRaw !== null
+      ? (statsRaw as BacktestResult["stats_by_signal_kind"])
+      : undefined;
+
+  const closed_trades = closed.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      entry_bar_idx: r.entry_bar_idx != null ? Number(r.entry_bar_idx) : undefined,
+      exit_bar_idx: r.exit_bar_idx != null ? Number(r.exit_bar_idx) : undefined,
+      entry_time: String(r.entry_time ?? ""),
+      exit_time: String(r.exit_time ?? ""),
+      entry_price: Number(r.entry_price ?? 0),
+      exit_price: Number(r.exit_price ?? 0),
+      side: String(r.side ?? ""),
+      pnl_usdt: Number(r.pnl_usdt ?? 0),
+      pnl_pct: Number(r.pnl_pct ?? 0),
+      bars_held: Number(r.bars_held ?? 0),
+      signal_kind_at_entry: String(r.signal_kind_at_entry ?? ""),
+    };
+  });
+
+  return {
+    success: raw.success !== false,
+    disclaimer: typeof raw.disclaimer === "string" ? raw.disclaimer : undefined,
+    total_return_pct: total_ret_frac * 100,
+    max_drawdown_pct: max_dd_frac * 100,
+    sharpe_ratio: m?.sharpe_naive != null ? Number(m.sharpe_naive) : undefined,
+    trade_count: m ? Number(m.trades ?? 0) : 0,
+    bars_used: m ? Number(m.bars_used ?? 0) : undefined,
+    final_equity_usdt: m ? Number(m.final_equity_usdt ?? 0) : undefined,
+    closed_trade_count:
+      m?.closed_trade_count != null ? Number(m.closed_trade_count) : closed_trades.length,
+    win_rate_pct: m?.win_rate != null ? Number(m.win_rate) * 100 : undefined,
+    profit_factor: m?.profit_factor != null ? Number(m.profit_factor) : undefined,
+    expectancy_per_trade_usdt:
+      m?.expectancy_per_trade_usdt != null ? Number(m.expectancy_per_trade_usdt) : undefined,
+    max_consecutive_losses:
+      m?.max_consecutive_losses != null ? Number(m.max_consecutive_losses) : undefined,
+    avg_win_usdt: m?.avg_win_usdt != null ? Number(m.avg_win_usdt) : undefined,
+    avg_loss_usdt: m?.avg_loss_usdt != null ? Number(m.avg_loss_usdt) : undefined,
+    closed_trades,
+    stats_by_signal_kind,
+  };
+}
+
 export async function postBacktestQuick(params: BacktestRequest): Promise<BacktestResult> {
   const res = await fetch(`${apiPrefix()}/backtest/quick`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      market: "crypto",
+      symbol: params.symbol,
+      interval: String(params.interval),
+      max_bars: params.max_bars,
+      strategy: params.strategy,
+      fee_bps: params.fee_bps,
+      initial_equity_usdt: params.initial_equity,
+    }),
   });
   if (!res.ok) throw new Error(`回测失败: ${res.status}`);
-  return res.json();
+  const raw = (await res.json()) as Record<string, unknown>;
+  return normalizeQuickBacktest(raw);
 }
 
 /** POST `/ai/verdict` 等职位的响应（与后端 `AiVerdictResponse` 对齐）。 */

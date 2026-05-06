@@ -14,11 +14,10 @@ export function LayerPresets() {
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-subtle">
       <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">图层预设</span>
-      <ButtonGroup size="sm" variant="bordered">
+      <ButtonGroup size="sm" variant="outline">
         {PRESETS.map((p) => (
           <Button
             key={p.key}
-            title={p.title}
             className={activePreset === p.key ? "bg-accent/15 text-accent border-accent/40" : ""}
             onPress={() => applyPreset(p.key)}
           >

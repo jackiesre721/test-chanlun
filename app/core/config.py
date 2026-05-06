@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # 二类「延伸」：同一中枢语境下，二买/二卖确认后再次抬高低点/压低高点的同类结构（T2S）。
     enable_t2s_second_extend: bool = Field(default=True)
 
+    # 独立形态二买/二卖：不依赖背驰，纯 DOWN-UP-DOWN 抬高低点 / UP-DOWN-UP 压低高点。
+    enable_standalone_second_signals: bool = Field(default=True)
+
     # MACD 序列缓存：多次 analyze 相同尾部窗口时减重复计算（0=关闭）。
     macd_cache_max_entries: int = Field(default=64, ge=0, le=10_000)
 

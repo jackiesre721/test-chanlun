@@ -1,6 +1,33 @@
 
 # Changelog
 
+## 2026-05-05 形态二买优化 + 过滤信号开关
+
+### 信号生成优化
+- **扩展类二买范围**：`_class_like_second_signals()` 不再限制第一个低点必须在中枢内部，允许破中枢后反转形成类二买（第一个低点可在 ZD 下方最多 2 倍中枢高度）。中枢外信号强度从 0.62 降为 0.58
+- **新增独立形态二买/二卖**：`_standalone_second_signals_for_pivot()` 纯形态检测 DOWN→UP→DOWN 抬高低点 / UP→DOWN→UP 压低高点，不依赖 MACD 背驰，不依赖一类信号链。强度 0.55。可配置开关 `enable_standalone_second_signals`（默认开启）
+- 两种机制互补：扩展类二买覆盖中枢边界附近，独立形态二买覆盖跨中枢和更远距离
+
+### 前端过滤信号开关
+- 工具栏新增「含过滤信号」复选框（默认关）
+- 勾选后显示盈亏比 < 1.5、趋势不符、段级一类的信号（半透明白色标记）
+- 信号列表同步显示过滤信号，标注「(过滤)」标签
+
+### 后端改动
+- `models.py`：`Signal` 新增 `rr_filtered: bool` 字段；`AnalyzeResponse` 新增 `buy_signals_filtered` / `sell_signals_filtered`
+- `analysis_pipeline.py`：不再丢弃过滤信号，改为标记 `rr_filtered=True`，段级一类也保留并标记
+- `chan_engine.py`：扩展 `_class_like_second_signals()`，新增 `_standalone_second_signals_for_pivot()`
+- `config.py`：新增 `enable_standalone_second_signals` 配置
+- `analysis_pipeline.py`：信号返回数量从 12 提升到 30，避免形态二买被截断
+
+### 前端改动
+- `index.html`：新增「含过滤信号」复选框
+- `render.js`：新增 `filteredSignalSeries()` 函数，半透明渲染过滤信号
+- `api.js`：合并 filtered 信号到主信号列表
+- `signals.js`：区分显示过滤信号
+- `constants.js`：`LAYER_SERIES_MAP` 新增过滤信号 series
+- `main.js`：新增 `showFilteredSignals` 重绘联动
+
 ## 2026-05-05 回测交易明细增强
 
 ### 功能

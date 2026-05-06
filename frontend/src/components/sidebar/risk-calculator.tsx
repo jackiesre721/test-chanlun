@@ -62,7 +62,7 @@ export function RiskCalculator() {
       : "bg-surface-hover border-border-subtle text-text-muted";
 
   return (
-    <Disclosure defaultOpen>
+    <Disclosure defaultExpanded>
       <Card className="card-glow bg-bg-card border border-border-subtle">
         <DisclosureTrigger>
           <div className="section-label cursor-pointer hover:text-accent transition-colors" style={{ padding: "10px 12px 8px" }}>
@@ -151,7 +151,7 @@ export function RiskCalculator() {
               onSelectionChange={(key) => key && setLeverage(Number(key))}
             >
               <Select.Trigger>
-                <Select.Value placeholder="杠杆" />
+                <Select.Value />
               </Select.Trigger>
               <Select.Popover>
                 <ListBox>
@@ -179,11 +179,11 @@ export function RiskCalculator() {
             )}
 
             <div className="flex gap-2 flex-wrap items-center">
-              <Button size="sm" variant="light" onPress={fillFromChart}>
+              <Button size="sm" variant="ghost" onPress={fillFromChart}>
                 填入现价
               </Button>
               {sizing_mode === "risk_fraction" ? (
-                <Button size="sm" color="primary" onPress={compute} isDisabled={computing}>
+                <Button size="sm" variant="primary" onPress={compute} isDisabled={computing}>
                   {computing ? "计算中…" : "计算"}
                 </Button>
               ) : (

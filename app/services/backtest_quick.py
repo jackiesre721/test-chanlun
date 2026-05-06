@@ -11,6 +11,7 @@ from typing import Literal, Optional, Tuple
 from app.core.config import settings
 from app.core.models import (
     Candle,
+    Pivot,
     QuickBacktestKindStat,
     QuickBacktestMetrics,
     QuickBacktestRequest,
@@ -23,6 +24,14 @@ from app.core.models import (
 from app.repositories.market_data import BinanceRepository
 from app.services.analyzer import HIGHER_INTERVAL, project_higher_onto_base
 from app.services.analysis_pipeline import build_analyze_bundle
+
+# ── Phase 1 strategy parameters ──
+
+# Signal kinds to skip entirely
+_SKIP_KINDS: frozenset[str] = frozenset({"first", "third_class"})
+
+# Signal kinds that use half margin
+_HALF_MARGIN_KINDS: frozenset[str] = frozenset({"second_extend", "second_class"})
 
 
 @dataclass
@@ -205,6 +214,9 @@ def _simulate(
     def _open(sig: Signal, px: float, candle: Candle, side: str) -> None:
         nonlocal pos_qty, pos_entry, pos_margin, active_sl, pending
         margin = min(fixed_margin, balance) if fixed_margin else balance
+        # Phase 1: half margin for lower-confidence signal kinds
+        if sig.kind in _HALF_MARGIN_KINDS:
+            margin *= 0.5
         if margin <= 0:
             return
         equity_before_open = _equity(px)
@@ -327,6 +339,32 @@ def _apply_resonance_filter(
     return buy_signals, sell_signals
 
 
+def _apply_strategy_filter(
+    buy_signals: list[Signal],
+    sell_signals: list[Signal],
+    pivots: list[Pivot],
+) -> tuple[list[Signal], list[Signal]]:
+    """Phase 1: skip unwanted kinds + avoid trading inside pivot zones (except 类二)."""
+
+    def _inside_pivot(sig: Signal) -> bool:
+        """True if the signal price sits inside any bi-level pivot zone [ZD, ZG]."""
+        if sig.kind == "second_class":
+            return False  # 类二买卖点允许在中枢内
+        for p in pivots:
+            if p.level != "bi":
+                continue
+            if sig.idx < p.start_idx or sig.idx > p.end_idx:
+                continue
+            if p.zd <= sig.price <= p.zg:
+                return True
+        return False
+
+    def _filter(signals: list[Signal]) -> list[Signal]:
+        return [s for s in signals if s.kind not in _SKIP_KINDS and not _inside_pivot(s)]
+
+    return _filter(buy_signals), _filter(sell_signals)
+
+
 async def run_quick_backtest(repository: BinanceRepository, request: QuickBacktestRequest) -> QuickBacktestResponse:
     if request.start_time_ms is not None:
         candles = await repository.get_klines_history_from_time(
@@ -371,6 +409,11 @@ async def run_quick_backtest(repository: BinanceRepository, request: QuickBackte
         composite = tr.composite
     filtered_buy, filtered_sell = _apply_resonance_filter(
         bundle.all_buy_signals, bundle.all_sell_signals, composite,
+    )
+
+    # Phase 1: strategy filter (kind + pivot zone)
+    filtered_buy, filtered_sell = _apply_strategy_filter(
+        filtered_buy, filtered_sell, bundle.response.zhongshus,
     )
 
     trades, round_trips, final_eq, max_dd = _simulate(

@@ -30,7 +30,7 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       symbol: "BTCUSDT",
-      interval: "1",
+      interval: "30",
       layers: { ...DEFAULT_LAYERS },
       compactToolbar: false,
       hideSidebar: false,

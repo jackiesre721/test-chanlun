@@ -200,8 +200,8 @@ def build_analyze_bundle_from_normalized(
                         sig.stop_loss_2 = bp.zg + 0.15 * (bp.zg - bp.zd)
                 break
 
-    buy_signals = [s for s in all_buy if not s.rr_filtered][-12:]
-    sell_signals = [s for s in all_sell if not s.rr_filtered][-12:]
+    buy_signals = [s for s in all_buy if not s.rr_filtered][-30:]
+    sell_signals = [s for s in all_sell if not s.rr_filtered][-30:]
 
     last_i = len(normalized) - 1
     action_focus = build_action_focus(

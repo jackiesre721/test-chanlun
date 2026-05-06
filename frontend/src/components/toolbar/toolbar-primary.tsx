@@ -3,14 +3,18 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useEffect } from "react";
 import { getSymbols } from "@/lib/api";
+import { HIGHER_INTERVAL, INTERVAL_LABEL } from "@/constants/level-maps";
 
 const INTERVAL_OPTIONS = [
-  { value: "1", label: "1 分钟｜约当日线复盘窗口" },
-  { value: "15", label: "15 分钟｜约周线尺度" },
-  { value: "30", label: "30 分钟｜约月线尺度" },
+  { value: "1", label: "1 分钟" },
+  { value: "5", label: "5 分钟" },
+  { value: "15", label: "15 分钟" },
+  { value: "30", label: "30 分钟" },
   { value: "60", label: "1 小时" },
   { value: "240", label: "4 小时" },
-  { value: "1440", label: "日线" },
+  { value: "1440", label: "1 天" },
+  { value: "10080", label: "1 周" },
+  { value: "43200", label: "1 月" },
 ];
 
 export function ToolbarPrimary() {
@@ -50,7 +54,7 @@ export function ToolbarPrimary() {
         aria-label="品种"
       >
         <Select.Trigger>
-          <Select.Value placeholder="选择品种" />
+          <Select.Value />
         </Select.Trigger>
         <Select.Popover>
           <ListBox>
@@ -69,7 +73,7 @@ export function ToolbarPrimary() {
         aria-label="周期"
       >
         <Select.Trigger>
-          <Select.Value placeholder="选择周期" />
+          <Select.Value />
         </Select.Trigger>
         <Select.Popover>
           <ListBox>
@@ -79,10 +83,15 @@ export function ToolbarPrimary() {
           </ListBox>
         </Select.Popover>
       </Select>
+      {HIGHER_INTERVAL[interval] && (
+        <span className="text-[10px] text-text-muted tracking-wider">
+          上级 → {INTERVAL_LABEL[HIGHER_INTERVAL[interval]] || HIGHER_INTERVAL[interval]}
+        </span>
+      )}
 
       {/* Analyze button */}
       <Button
-        color="primary"
+        variant="primary"
         size="sm"
         onPress={handleAnalyze}
         isDisabled={analyzing}
@@ -93,14 +102,13 @@ export function ToolbarPrimary() {
 
       {/* Layout toggles */}
       <div className="flex items-center gap-2">
-        <Button size="sm" variant="light" onPress={toggleCompactToolbar}>
+        <Button size="sm" variant="ghost" onPress={toggleCompactToolbar}>
           {compactToolbar ? "展开控件" : "收起控件"}
         </Button>
-        <Button size="sm" variant="light" onPress={toggleHideSidebar}>
+        <Button size="sm" variant="ghost" onPress={toggleHideSidebar}>
           {hideSidebar ? "显示侧栏" : "隐藏侧栏"}
         </Button>
         <Checkbox
-          size="sm"
           aria-label="紧凑副图：抬高主图并压缩 MACD、RSI 副图高度"
           isSelected={compactSubplots}
           onChange={() => toggleCompactSubplots()}

@@ -37,7 +37,7 @@ export function PaperTradingCard() {
   useEffect(() => { loadRecent(); }, []);
 
   return (
-    <Disclosure defaultOpen={false}>
+    <Disclosure defaultExpanded={false}>
       <Card className="card-glow bg-bg-card border border-border-subtle">
         <DisclosureTrigger>
           <div className="section-label cursor-pointer hover:text-accent transition-colors" style={{ padding: "10px 12px 8px" }}>
@@ -52,9 +52,9 @@ export function PaperTradingCard() {
             <Input aria-label="纸盘交易数量" placeholder="数量 (如 0.01)" type="number" value={qty} onChange={(e) => setQty(e.target.value)} className="text-sm" />
             <Input aria-label="纸盘备注" placeholder="备注（可选）" value={note} onChange={(e) => setNote(e.target.value)} className="text-sm" />
             <div className="flex gap-2">
-              <Button size="sm" variant="bordered" className="text-success border-success/30" onPress={() => trade("BUY")}>模拟买入</Button>
-              <Button size="sm" variant="bordered" className="text-danger border-danger/30" onPress={() => trade("SELL")}>模拟卖出</Button>
-              <Button size="sm" variant="light" onPress={loadRecent}>刷新</Button>
+              <Button size="sm" variant="outline" className="text-success border-success/30" onPress={() => trade("BUY")}>模拟买入</Button>
+              <Button size="sm" variant="outline" className="text-danger border-danger/30" onPress={() => trade("SELL")}>模拟卖出</Button>
+              <Button size="sm" variant="ghost" onPress={loadRecent}>刷新</Button>
             </div>
             {status && <div className="text-xs text-text-muted">{status}</div>}
             {records.length > 0 && (

@@ -81,13 +81,13 @@ export function VerdictCard() {
     <Card className={`card-verdict ${lastResult ? "animate-slide-up" : ""}`} data-tone={v.tone}>
       <div className="section-label flex items-center justify-between" style={{ padding: "2px 0 6px" }}>
         <span>当下结论</span>
-        <Checkbox size="sm" aria-label="启用智谱 GLM 摘要" isSelected={useGlm} onChange={() => setUseGlm(!useGlm)}>
+        <Checkbox aria-label="启用智谱 GLM 摘要" isSelected={useGlm} onChange={() => setUseGlm(!useGlm)}>
           <span className="text-[10px]">GLM</span>
         </Checkbox>
       </div>
       <CardContent className="px-0 pb-0 pt-0">
         <div className="flex items-center gap-2 mb-2">
-          <Chip color={v.chipColor} size="sm" variant="flat">{v.headline}</Chip>
+          <Chip color={v.chipColor} size="sm" variant="soft">{v.headline}</Chip>
         </div>
         {v.bullets.map((b, i) => (
           <div key={i} className="text-xs text-text-primary/80 mb-1">• {b}</div>

@@ -35,7 +35,7 @@ export function DisciplineCard() {
               <div className="flex gap-1.5 mt-2 items-center flex-wrap">
                 <span className="text-[11px] text-text-muted">单笔风险比例：</span>
                 {[0.0025, 0.005, 0.01].map((f) => (
-                  <Button key={f} size="sm" variant="light" className="text-[10px]"
+                  <Button key={f} size="sm" variant="ghost" className="text-[10px]"
                     onPress={() => { /* fill risk fraction — would need risk store */ }}>
                     {(f * 100).toFixed(f < 0.01 ? 2 : 0)}%
                   </Button>
@@ -79,8 +79,8 @@ export function DisciplineCard() {
                 </label>
               </div>
               <div className="flex gap-2 mt-2">
-                <Button size="sm" variant="light" onPress={incrementLoss}>+1 不利</Button>
-                <Button size="sm" variant="light" onPress={resetLosses}>计数清零</Button>
+                <Button size="sm" variant="ghost" onPress={incrementLoss}>+1 不利</Button>
+                <Button size="sm" variant="ghost" onPress={resetLosses}>计数清零</Button>
               </div>
               {thresholdReached && (
                 <div className="mt-2 p-2 rounded bg-danger/10 border border-danger/30 text-danger font-bold text-[11px]">

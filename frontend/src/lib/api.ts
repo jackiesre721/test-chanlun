@@ -6,7 +6,6 @@ import type {
   PaperTradeRecord,
   BacktestRequest,
   BacktestResult,
-  BacktestExecTrade,
   SymbolOption,
 } from "@/types/analysis";
 
@@ -68,27 +67,10 @@ export async function postRiskPositionSize(params: PositionSizeRequest): Promise
   const res = await fetch(`${apiPrefix()}/risk/position-size`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      equity_usdt: params.equity,
-      risk_fraction: params.risk_fraction,
-      entry_price: params.entry_price,
-      stop_price: params.stop_price,
-      leverage: params.leverage ?? 1,
-      maint_margin_rate: params.maint_margin_rate,
-    }),
+    body: JSON.stringify(params),
   });
   if (!res.ok) throw new Error(`风控计算失败: ${res.status}`);
-  const raw = (await res.json()) as Record<string, unknown>;
-  return {
-    quantity: Number(raw.suggested_quantity ?? 0),
-    notional: Number(raw.notional_usdt ?? 0),
-    risk_amount: Number(raw.risk_usdt ?? 0),
-    leverage: Number(raw.leverage ?? 1),
-    required_margin: raw.required_margin != null ? Number(raw.required_margin) : undefined,
-    liquidation_price: raw.liquidation_price != null ? Number(raw.liquidation_price) : undefined,
-    effective_risk_pct: raw.effective_risk_pct != null ? Number(raw.effective_risk_pct) : undefined,
-    warnings: Array.isArray(raw.warnings) ? (raw.warnings as string[]) : [],
-  };
+  return res.json();
 }
 
 export async function postPaperTrade(params: PaperTradeRequest): Promise<PaperTradeRecord> {
@@ -107,112 +89,17 @@ export async function getPaperRecent(): Promise<PaperTradeRecord[]> {
   return res.json();
 }
 
-/** 将后端 `QuickBacktestResponse` 转为侧栏易用的扁平字段。 */
-export function normalizeQuickBacktest(raw: Record<string, unknown>): BacktestResult {
-  const m = raw.metrics as Record<string, unknown> | undefined;
-  const closedRaw = raw.closed_trades;
-  const closed = Array.isArray(closedRaw) ? closedRaw : [];
-
-  const total_ret_frac = m ? Number(m.total_return_fraction ?? 0) : 0;
-  const max_dd_frac = m ? Number(m.max_drawdown_fraction ?? 0) : 0;
-
-  const statsRaw = raw.stats_by_signal_kind;
-  const stats_by_signal_kind =
-    statsRaw && typeof statsRaw === "object" && statsRaw !== null
-      ? (statsRaw as BacktestResult["stats_by_signal_kind"])
-      : undefined;
-
-  const closed_trades = closed.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      entry_bar_idx: r.entry_bar_idx != null ? Number(r.entry_bar_idx) : undefined,
-      exit_bar_idx: r.exit_bar_idx != null ? Number(r.exit_bar_idx) : undefined,
-      entry_time: String(r.entry_time ?? ""),
-      exit_time: String(r.exit_time ?? ""),
-      entry_price: Number(r.entry_price ?? 0),
-      exit_price: Number(r.exit_price ?? 0),
-      side: String(r.side ?? ""),
-      pnl_usdt: Number(r.pnl_usdt ?? 0),
-      pnl_pct: Number(r.pnl_pct ?? 0),
-      bars_held: Number(r.bars_held ?? 0),
-      signal_kind_at_entry: String(r.signal_kind_at_entry ?? ""),
-    };
-  });
-
-  const logRaw = raw.trade_log;
-  const trade_log: BacktestExecTrade[] = Array.isArray(logRaw)
-    ? logRaw.map((row) => {
-        const r = row as Record<string, unknown>;
-        const act = String(r.action ?? "").toUpperCase();
-        return {
-          bar_idx: Number(r.bar_idx ?? 0),
-          time: String(r.time ?? ""),
-          action: act === "SELL" ? "SELL" : "BUY",
-          price: Number(r.price ?? 0),
-          equity_after: Number(r.equity_after ?? 0),
-          exit_reason: r.exit_reason != null ? String(r.exit_reason) : undefined,
-          quantity: r.quantity != null ? Number(r.quantity) : undefined,
-          stop_loss: r.stop_loss != null ? Number(r.stop_loss) : undefined,
-          take_profit_1: r.take_profit_1 != null ? Number(r.take_profit_1) : undefined,
-          take_profit_2: r.take_profit_2 != null ? Number(r.take_profit_2) : undefined,
-        };
-      })
-    : [];
-
-  return {
-    success: raw.success !== false,
-    disclaimer: typeof raw.disclaimer === "string" ? raw.disclaimer : undefined,
-    total_return_pct: total_ret_frac * 100,
-    max_drawdown_pct: max_dd_frac * 100,
-    sharpe_ratio: m?.sharpe_naive != null ? Number(m.sharpe_naive) : undefined,
-    trade_count: m ? Number(m.trades ?? 0) : 0,
-    bars_used: m ? Number(m.bars_used ?? 0) : undefined,
-    final_equity_usdt: m ? Number(m.final_equity_usdt ?? 0) : undefined,
-    closed_trade_count:
-      m?.closed_trade_count != null ? Number(m.closed_trade_count) : closed_trades.length,
-    win_rate_pct: m?.win_rate != null ? Number(m.win_rate) * 100 : undefined,
-    profit_factor: m?.profit_factor != null ? Number(m.profit_factor) : undefined,
-    expectancy_per_trade_usdt:
-      m?.expectancy_per_trade_usdt != null ? Number(m.expectancy_per_trade_usdt) : undefined,
-    max_consecutive_losses:
-      m?.max_consecutive_losses != null ? Number(m.max_consecutive_losses) : undefined,
-    avg_win_usdt: m?.avg_win_usdt != null ? Number(m.avg_win_usdt) : undefined,
-    avg_loss_usdt: m?.avg_loss_usdt != null ? Number(m.avg_loss_usdt) : undefined,
-    stop_loss_hits: m?.stop_loss_hits != null ? Number(m.stop_loss_hits) : undefined,
-    closed_trades,
-    trade_log,
-    stats_by_signal_kind,
-  };
-}
-
 export async function postBacktestQuick(params: BacktestRequest): Promise<BacktestResult> {
-  const body: Record<string, unknown> = {
-    market: "crypto",
-    symbol: params.symbol,
-    interval: String(params.interval),
-    strategy: params.strategy,
-    fee_bps: params.fee_bps,
-    initial_equity_usdt: params.initial_equity,
-    leverage: params.leverage ?? 1,
-  };
-  if (params.trade_amount_usdt != null && params.trade_amount_usdt > 0) {
-    body.trade_amount_usdt = params.trade_amount_usdt;
-  }
-  if (params.start_time_ms != null && Number.isFinite(params.start_time_ms)) {
-    body.start_time_ms = Math.floor(params.start_time_ms);
-  }
-  if (params.end_time_ms != null && Number.isFinite(params.end_time_ms)) {
-    body.end_time_ms = Math.floor(params.end_time_ms);
-  }
-
   const res = await fetch(`${apiPrefix()}/backtest/quick`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(params),
   });
-  if (!res.ok) throw new Error(`回测失败: ${res.status}`);
-  const raw = (await res.json()) as Record<string, unknown>;
-  return normalizeQuickBacktest(raw);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`回测失败: ${res.status} ${text}`);
+  }
+  return res.json();
 }
 
 /** POST `/ai/verdict` 等职位的响应（与后端 `AiVerdictResponse` 对齐）。 */

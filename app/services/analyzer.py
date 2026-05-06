@@ -21,6 +21,7 @@ from app.services.analysis_pipeline import build_analyze_response
 HIGHER_INTERVAL = {
     "1": "5",
     "5": "30",
+    "15": "60",
     "30": "240",
     "240": "1440",
     "1440": "10080",

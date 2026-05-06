@@ -1,6 +1,7 @@
-import type { AnalyzeResult, Stroke, Fractal, Divergence, Pivot, KlineBar, BacktestExecTrade } from "@/types/analysis";
+import type { AnalyzeResult, Stroke, Fractal, Divergence, Pivot, KlineBar, BacktestExecTrade, Signal } from "@/types/analysis";
 import { CHART_PALETTE, ANALYZE_LIMIT } from "@/constants/chart-palette";
-import { LAYER_SERIES_MAP, type LayerState } from "@/constants/layer-presets";
+import { buildLayerSeriesMap, type LayerState } from "@/constants/layer-presets";
+import { levelLabel, higherLabel, signalLabel, KIND_CHART_LABEL } from "@/constants/level-maps";
 import { fmtOpenTime } from "@/lib/format";
 
 export interface ChartSettings {
@@ -62,17 +63,17 @@ function segmentPolyline(name: string, segments: AnalyzeResult["segments"], bis:
   return {
     name, type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 8,
     data, connectNulls: false, showSymbol: false, symbol: "none",
-    lineStyle: { color, width, cap: "round", join: "round", shadowBlur: 10, shadowColor: "rgba(255,167,38,0.45)", shadowOffsetY: 0 },
+    lineStyle: { color, width, cap: "round", join: "round" },
     itemStyle: { color }, emphasis: { disabled: true },
   };
 }
 
-function activeBiLine(stroke: Stroke, len: number) {
+function activeBiLine(stroke: Stroke, len: number, lv: string) {
   const data = Array(len).fill(null) as (number | null)[];
   if (stroke.start_idx >= 0 && stroke.start_idx < len) data[stroke.start_idx] = stroke.start_price;
   if (stroke.end_idx >= 0 && stroke.end_idx < len) data[stroke.end_idx] = stroke.end_price;
   return {
-    name: "未完成笔", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 5,
+    name: `${lv}未完成笔`, type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 5,
     data, connectNulls: true, symbol: "circle", symbolSize: 6,
     lineStyle: { color: CHART_PALETTE.activeBi, width: 2, type: "dashed" },
     itemStyle: { color: CHART_PALETTE.activeBi }, emphasis: { disabled: true },
@@ -115,7 +116,7 @@ function pivotBand(name: string, pivots: Pivot[], pal: { fill: string; border: s
     name, type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 1, data: [], silent: true, tooltip: { show: false },
     markArea: {
       silent: true,
-      itemStyle: { color: pal.fill, borderColor: pal.border, borderWidth: 1.25, borderType: segBand ? "dashed" : "solid", shadowBlur: 8, shadowColor: "rgba(0,0,0,0.45)" },
+      itemStyle: { color: pal.fill, borderColor: pal.border, borderWidth: 1.25, borderType: segBand ? "dashed" : "solid" },
       data: pivots.map(p => [{ xAxis: p.start_idx, yAxis: p.zd }, { xAxis: p.end_idx, yAxis: p.zg }]),
     },
   };
@@ -135,28 +136,49 @@ function divergenceScatter(divergences: Divergence[]) {
   };
 }
 
-function biPauseScatter(bis: Stroke[]) {
-  const pts = bis.filter(b => b.pause_after_end === true).map(b => {
-    const x = b.norm_end_idx != null ? b.norm_end_idx : b.end_idx;
-    return { value: [x, b.end_price] };
-  });
-  if (!pts.length) return null;
+function signalScatter(name: string, signals: Signal[], color: string, sym: string, interval: string) {
+  const isBuy = signals.length > 0 && signals[0]?.side === "BUY";
   return {
-    name: "笔停顿", type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 11, symbol: "pin", symbolSize: 11,
-    itemStyle: { color: CHART_PALETTE.pause, borderColor: CHART_PALETTE.pauseBorder, borderWidth: 1 },
-    label: { show: true, position: "bottom", distance: 2, fontSize: 9, color: "#fffde7", formatter: "停顿" },
-    data: pts,
-  };
-}
-
-function signalScatter(name: string, signals: AnalyzeResult["buy_signals"], color: string, sym: string) {
-  return {
-    name, type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 13, symbol: sym, symbolSize: 17,
-    itemStyle: { color, borderColor: "#263238", borderWidth: 1.5 },
-    data: signals.map(s => ({
-      value: [s.idx, s.price], chanSignalKind: "trade", chanSignalIdx: s.idx, chanSignalSide: s.side,
-      itemStyle: { color, borderColor: "#263238", borderWidth: 1.5 },
-    })),
+    name, type: "scatter", xAxisIndex: 0, yAxisIndex: 0, z: 13, symbol: sym,
+    data: signals.map(s => {
+      const isSeg = s.level === "segment";
+      const shortLabel = KIND_CHART_LABEL[s.kind] || s.kind;
+      return {
+        value: [s.idx, s.price],
+        chanSignalKind: "trade", chanSignalIdx: s.idx, chanSignalSide: s.side,
+        symbolSize: isSeg ? 18 : 12,
+        itemStyle: {
+          color,
+          borderColor: isSeg ? "#fff" : "#263238",
+          borderWidth: isSeg ? 2.5 : 1,
+          borderType: isSeg ? "solid" as const : "solid" as const,
+        },
+        label: {
+          show: true,
+          position: isBuy ? ("bottom" as const) : ("top" as const),
+          distance: 4,
+          fontSize: isSeg ? 12 : 10,
+          fontWeight: isSeg ? 700 : 400,
+          color,
+          textBorderColor: "#12161f",
+          textBorderWidth: 2,
+          formatter: () => shortLabel,
+        },
+      };
+    }),
+    tooltip: {
+      show: true,
+      backgroundColor: "rgba(14,17,24,.94)",
+      borderColor: "rgba(255,255,255,.09)",
+      textStyle: { color: "#e8eaf0", fontSize: 10 },
+      formatter(params: any) {
+        const s = signals[params.dataIndex];
+        if (!s) return "";
+        const label = signalLabel(s.level, s.kind, s.side, interval);
+        const price = s.price?.toFixed(2) || "?";
+        return `${label}<br/>价格: ${price}`;
+      },
+    },
   };
 }
 
@@ -230,13 +252,17 @@ function linesFormGraphic(result: AnalyzeResult) {
 
 // ── main builder ──
 
-export function buildChartOption(result: AnalyzeResult, settings: ChartSettings) {
+export function buildChartOption(result: AnalyzeResult, settings: ChartSettings, interval: string) {
   const times = result.kline_data.map(k => k.time);
   const len = times.length;
   const candles = result.kline_data.map(k => [k.open, k.close, k.low, k.high]);
   const macdBars = result.macd_data.map(m => m.hist);
   const dif = result.macd_data.map(m => m.dif);
   const dea = result.macd_data.map(m => m.dea);
+
+  const LINE_WIDTH = 2;
+  const lv = levelLabel(interval);
+  const hi = higherLabel(interval);
 
   const series: any[] = [
     {
@@ -250,26 +276,34 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
   const biPivots = zhAll.filter(p => p.level === "bi");
   const segPivots = zhAll.filter(p => p.level === "segment");
 
-  series.push(strokeLine("本级笔", result.bis, len, CHART_PALETTE.bi, 2));
-  if (result.active_bi) series.push(activeBiLine(result.active_bi, len));
-  const pauseS = biPauseScatter(result.bis);
-  if (pauseS) series.push(pauseS);
+  series.push(strokeLine(`${lv}笔`, result.bis, len, CHART_PALETTE.bi, LINE_WIDTH));
+  if (result.active_bi) series.push(activeBiLine(result.active_bi, len, lv));
   series.push(...fractalScatter(result.fractals));
-  series.push(signalScatter("买点", result.buy_signals || [], CHART_PALETTE.signalBuy, "triangle"));
-  series.push(signalScatter("卖点", result.sell_signals || [], CHART_PALETTE.signalSell, "pin"));
+  series.push(signalScatter("买点", result.buy_signals || [], CHART_PALETTE.signalBuy, "circle", interval));
+  series.push(signalScatter("卖点", result.sell_signals || [], CHART_PALETTE.signalSell, "circle", interval));
   if (result.divergences?.length) series.push(divergenceScatter(result.divergences));
-  series.push(strokeLine("上级笔", result.bis_lv2 || [], len, CHART_PALETTE.higherBi, 2, true));
-  if (biPivots.length) series.push(pivotBand("笔中枢带", biPivots, CHART_PALETTE.pivotBi));
-  if (segPivots.length) series.push(pivotBand("线段中枢带", segPivots, CHART_PALETTE.pivotSegment));
-  if (result.zhongshus_lv2?.length) series.push(pivotBand("上级中枢", result.zhongshus_lv2, CHART_PALETTE.pivotHigher));
-  const sp = segmentPolyline("线段", result.segments, result.bis, len, CHART_PALETTE.segment, 4);
+  if (biPivots.length) series.push(pivotBand(`${lv}中枢`, biPivots, CHART_PALETTE.pivotBi));
+  if (segPivots.length) series.push(pivotBand(`${hi}中枢`, segPivots, CHART_PALETTE.pivotSegment));
+  const sp = segmentPolyline(`${hi}笔`, result.segments, result.bis, len, CHART_PALETTE.segment, LINE_WIDTH);
   if (sp) series.push(sp);
 
   const boll = result.bollinger || [];
   if (boll.length === len) {
-    series.push({ name: "BOLL上", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4, data: boll.map(b => b.upper), symbol: "none", lineStyle: { width: 1, color: CHART_PALETTE.bollUpper } });
-    series.push({ name: "BOLL中", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4, data: boll.map(b => b.mid), symbol: "none", lineStyle: { width: 1, type: "dotted", color: CHART_PALETTE.bollMid } });
-    series.push({ name: "BOLL下", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4, data: boll.map(b => b.lower), symbol: "none", lineStyle: { width: 1, color: CHART_PALETTE.bollLower } });
+    series.push({
+      name: "BOLL", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4,
+      data: boll.map(b => b.upper), symbol: "none",
+      lineStyle: { width: 1, color: CHART_PALETTE.bollUpper },
+    });
+    series.push({
+      name: "BOLL_MID", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4,
+      data: boll.map(b => b.mid), symbol: "none",
+      lineStyle: { width: 1, type: "dotted", color: CHART_PALETTE.bollMid },
+    });
+    series.push({
+      name: "BOLL_LOW", type: "line", xAxisIndex: 0, yAxisIndex: 0, z: 4,
+      data: boll.map(b => b.lower), symbol: "none",
+      lineStyle: { width: 1, color: CHART_PALETTE.bollLower },
+    });
   }
   if (result.fake_bis?.length) {
     const data = Array(len).fill(null) as (number | null)[];
@@ -293,12 +327,18 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
       markLine: { silent: true, symbol: "none", lineStyle: { color: "rgba(255,255,255,.2)", type: "dashed" }, data: [{ yAxis: 70 }, { yAxis: 30 }] } });
   }
 
-  // Legend visibility from layer settings
+  // Legend visibility from layer settings (dynamic series names)
+  const seriesMap = buildLayerSeriesMap(interval);
   const legendSelected: Record<string, boolean> = {};
-  for (const [key, names] of Object.entries(LAYER_SERIES_MAP)) {
+  for (const [key, names] of Object.entries(seriesMap)) {
     const checked = settings.layers[key as keyof typeof settings.layers] ?? true;
     for (const n of names) legendSelected[n] = checked;
   }
+  // BOLL mid/low follow the main BOLL toggle
+  legendSelected["BOLL_MID"] = legendSelected["BOLL"] ?? true;
+  legendSelected["BOLL_LOW"] = legendSelected["BOLL"] ?? true;
+  // Hide BOLL_MID and BOLL_LOW from legend display
+  const legendHide = new Set(["BOLL_MID", "BOLL_LOW"]);
 
   const bo = settings.backtestOverlay;
   const symEq =
@@ -319,6 +359,9 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
   const grids = subC
     ? [{ left: 48, right: 68, top: 28, height: "58%" }, { left: 48, right: 68, top: "67%", height: "9%" }, { left: 48, right: 68, top: "78%", height: "9%" }]
     : [{ left: 50, right: 70, top: 46, height: "46%" }, { left: 50, right: 70, top: "60%", height: "10%" }, { left: 50, right: 70, top: "72%", height: "10%" }];
+
+  // Build legend data: show visible entries, hide internal BOLL sub-lines
+  const legendData = Array.from(new Set(series.map((s: any) => s.name).filter((n: string) => !legendHide.has(n))));
 
   return {
     backgroundColor: "#12161f",
@@ -343,7 +386,11 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
           } else if (q.seriesType === "scatter") {
             const d = q.data;
             if (d?.dv) { lines.push(`${q.seriesName}：${d.dv.description || ""}`); }
-            else if (d?.chanSignalKind === "trade") { lines.push(`${q.seriesName}：索引 ${d.chanSignalIdx}（点击联动侧栏）`); }
+            else if (d?.chanSignalKind === "trade") {
+              const sig = (q.seriesName === "买点" ? result.buy_signals : result.sell_signals)?.[q.dataIndex];
+              const sigLbl = sig ? signalLabel(sig.level, sig.kind, sig.side, interval) : q.seriesName;
+              lines.push(`${sigLbl}：索引 ${d.chanSignalIdx}`);
+            }
             else if (d?.fractalStrength != null) { lines.push(`${q.seriesName} 力度≈${d.fractalStrength}%`); }
           } else if (q.value != null) {
             const v = Array.isArray(q.value) ? q.value.map((x: any) => typeof x === "number" ? x.toFixed(4) : x).join(", ") : String(q.value);
@@ -355,6 +402,7 @@ export function buildChartOption(result: AnalyzeResult, settings: ChartSettings)
     },
     legend: {
       type: "scroll", top: subC ? 4 : 10, itemGap: 12, icon: "roundRect", itemWidth: 10, itemHeight: 10,
+      data: legendData,
       selected: legendSelected,
       pageIconColor: "rgba(228,232,240,.45)", pageTextStyle: { color: "rgba(228,232,240,.45)", fontSize: 10 },
       textStyle: { color: "rgba(228,232,240,.72)", fontSize: 11, fontFamily: "Inter, Noto Sans SC, sans-serif" },

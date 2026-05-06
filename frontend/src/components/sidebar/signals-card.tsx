@@ -20,7 +20,7 @@ export function SignalCard({ signal, onNavigate }: { signal: any; onNavigate?: (
       className="signal-row group"
       onClick={() => onNavigate?.(signal.idx)}
     >
-      <Chip size="sm" variant="flat" color={isBuy ? "success" : "danger"} className="shrink-0">
+      <Chip size="sm" variant="soft" color={isBuy ? "success" : "danger"} className="shrink-0">
         {signal.side}
       </Chip>
       <div className="min-w-0">

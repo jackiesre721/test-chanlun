@@ -1308,6 +1308,11 @@ def build_signals(
         for sig in _standalone_third_signals_for_pivot(candles, movements, pivot, pivot_idx, sig_level=level):
             (buy_signals if sig.side == SignalSide.BUY else sell_signals).append(sig)
 
+    if settings.enable_standalone_second_signals:
+        for pivot_idx, pivot in enumerate(pivots):
+            for sig in _standalone_second_signals_for_pivot(candles, movements, pivot, pivot_idx, sig_level=level):
+                (buy_signals if sig.side == SignalSide.BUY else sell_signals).append(sig)
+
     buy_out = _latest_signal_per_pivot_side(buy_signals)
     sell_out = _latest_signal_per_pivot_side(sell_signals)
     if trim_latest is not None:
@@ -1362,7 +1367,10 @@ def _class_like_second_signals(
     pivots: list[Pivot],
     level: str = "bi",
 ) -> tuple[list[Signal], list[Signal]]:
-    """类二买/类二卖：中枢震荡内抬高低点 / 压低高点（不依赖一类背驰）。"""
+    """类二买/类二卖：中枢震荡内或中枢下方抬高低点 / 压低高点（不依赖一类背驰）。
+
+    v2: 放宽 lo_a / hi_a 范围，允许第一个低点/高点在中枢外（破中枢后反转形成类二买/卖）。
+    """
     buys: list[Signal] = []
     sells: list[Signal] = []
     eps = 1e-8
@@ -1371,21 +1379,30 @@ def _class_like_second_signals(
             continue
         nxt = _next_pivot_start_bi(pivots, pivot_idx, pivot)
         hi = nxt if nxt is not None else len(movements)
-        if pivot.end_bi + 1 >= hi:
+        # 从中枢内部最后几笔开始扫描（包含中枢构成笔内的形态）
+        scan_start = max(pivot.start_bi, pivot.end_bi - 4)
+        if scan_start + 3 > hi:
             continue
-        post = movements[pivot.end_bi + 1 : hi]
-        base = pivot.end_bi + 1
+        post = movements[scan_start : hi]
+        base = scan_start
+        pivot_h = max(pivot.zg - pivot.zd, eps)
         for i in range(len(post) - 2):
             a, b, c = post[i], post[i + 1], post[i + 2]
             if a.direction == Direction.DOWN and b.direction == Direction.UP and c.direction == Direction.DOWN:
                 lo_a = min(a.start_price, a.end_price)
                 lo_c = min(c.start_price, c.end_price)
-                if not (pivot.zd + eps < lo_a < pivot.zg - eps):
+                # 允许 lo_a 在中枢内或中枢下方（最多 2% 距离，避免过远噪声）
+                max_drop = max(2 * pivot_h, 0.02 * pivot.zd)
+                if lo_a >= pivot.zg - eps or lo_a < pivot.zd - max_drop:
                     continue
                 if lo_c <= lo_a + eps:
                     continue
-                if lo_c <= pivot.zd + eps:
+                if lo_c <= pivot.zd + eps and lo_a >= pivot.zd + eps:
                     continue
+                inside = pivot.zd + eps < lo_a < pivot.zg - eps
+                desc = ("类二买：中枢震荡内后段低点高于前段低点" if inside
+                        else "类二买(中枢外)：破中枢后反转，后段低点高于前段低点")
+                sl = lo_a - _STOP_LOSS_BUFFER_RATIO * pivot_h
                 buys.append(
                     _signal(
                         candles,
@@ -1393,8 +1410,8 @@ def _class_like_second_signals(
                         "second_class",
                         c.end_idx,
                         c.end_price,
-                        "类二买：中枢震荡内后段低点高于前段低点",
-                        0.62,
+                        desc,
+                        0.62 if inside else 0.58,
                         pivot_level="bi",
                         pivot_idx=pivot_idx,
                         entry_seg_idx=base + i,
@@ -1402,9 +1419,9 @@ def _class_like_second_signals(
                         macd_ratio=None,
                         evidence=f"笔中枢#{pivot_idx}，段#{base + i}..#{base + i + 2}",
                         level=level,
-                        stop_loss=_sl_buy(pivot.zd, pivot.zg),
-                        take_profit=c.end_price + 2 * (c.end_price - _sl_buy(pivot.zd, pivot.zg)),
-                        take_profit_1=c.end_price + (c.end_price - _sl_buy(pivot.zd, pivot.zg)),
+                        stop_loss=sl,
+                        take_profit=c.end_price + 2 * (c.end_price - sl),
+                        take_profit_1=c.end_price + (c.end_price - sl),
                     )
                 )
                 break
@@ -1413,12 +1430,18 @@ def _class_like_second_signals(
             if a.direction == Direction.UP and b.direction == Direction.DOWN and c.direction == Direction.UP:
                 hi_a = max(a.start_price, a.end_price)
                 hi_c = max(c.start_price, c.end_price)
-                if not (pivot.zd + eps < hi_a < pivot.zg - eps):
+                # 允许 hi_a 在中枢内或中枢上方（最多 2% 距离）
+                max_rise = max(2 * pivot_h, 0.02 * pivot.zg)
+                if hi_a <= pivot.zd + eps or hi_a > pivot.zg + max_rise:
                     continue
                 if hi_c >= hi_a - eps:
                     continue
-                if hi_c >= pivot.zg - eps:
+                if hi_c >= pivot.zg - eps and hi_a <= pivot.zg - eps:
                     continue
+                inside = pivot.zd + eps < hi_a < pivot.zg - eps
+                desc = ("类二卖：中枢震荡内后段高点低于前段高点" if inside
+                        else "类二卖(中枢外)：破中枢后反转，后段高点低于前段高点")
+                sl = hi_a + _STOP_LOSS_BUFFER_RATIO * pivot_h
                 sells.append(
                     _signal(
                         candles,
@@ -1426,8 +1449,8 @@ def _class_like_second_signals(
                         "second_class",
                         c.end_idx,
                         c.end_price,
-                        "类二卖：中枢震荡内后段高点低于前段高点",
-                        0.62,
+                        desc,
+                        0.62 if inside else 0.58,
                         pivot_level="bi",
                         pivot_idx=pivot_idx,
                         entry_seg_idx=base + i,
@@ -1435,9 +1458,9 @@ def _class_like_second_signals(
                         macd_ratio=None,
                         evidence=f"笔中枢#{pivot_idx}，段#{base + i}..#{base + i + 2}",
                         level=level,
-                        stop_loss=_sl_sell(pivot.zd, pivot.zg),
-                        take_profit=c.end_price - 2 * (_sl_sell(pivot.zd, pivot.zg) - c.end_price),
-                        take_profit_1=c.end_price - (_sl_sell(pivot.zd, pivot.zg) - c.end_price),
+                        stop_loss=sl,
+                        take_profit=c.end_price - 2 * (sl - c.end_price),
+                        take_profit_1=c.end_price - (sl - c.end_price),
                     )
                 )
                 break
@@ -1734,6 +1757,130 @@ def _standalone_third_signals_for_pivot(
             )
         )
         k += 3
+
+    return out
+
+
+def _standalone_second_signals_for_pivot(
+    candles: list[Candle],
+    movements: list[Movement],
+    pivot: Pivot,
+    pivot_idx: int,
+    sig_level: str = "bi",
+    _MAX_SCAN_STROKES: int = 12,
+) -> list[Signal]:
+    """独立形态二买/二卖：不依赖一类背驰，纯看 DOWN-UP-DOWN 抬高低点 / UP-DOWN-UP 压低高点。
+
+    扫描范围：pivot.end_bi + 1 开始最多 _MAX_SCAN_STROKES 笔。
+    与 _class_like_second_signals 互补：后者覆盖中枢内部，本函数覆盖中枢外。
+    """
+    out: list[Signal] = []
+    zd, zg = pivot.zd, pivot.zg
+    pivot_lv = pivot.level
+    pivot_h = max(zg - zd, 1e-9)
+    end_k = min(pivot.end_bi + 1 + _MAX_SCAN_STROKES, len(movements))
+    k = pivot.end_bi + 1
+
+    # BUY: DOWN(a) → UP(b) → DOWN(c), lo_c > lo_a
+    while k + 2 < end_k:
+        a = movements[k]
+        if a.direction != Direction.DOWN:
+            k += 1
+            continue
+        b = movements[k + 1]
+        if b.direction != Direction.UP:
+            k += 1
+            continue
+        c = movements[k + 2]
+        if c.direction != Direction.DOWN:
+            k += 1
+            continue
+        lo_a = min(a.start_price, a.end_price)
+        lo_c = min(c.start_price, c.end_price)
+        if lo_c <= lo_a:
+            k += 1
+            continue
+        # 至少需要 0.1% 的抬升幅度，避免噪声
+        if (lo_c - lo_a) / max(lo_a, 1e-9) < 0.001:
+            k += 1
+            continue
+        # 不接受已经由 _class_like_second_signals 处理的中枢内信号
+        if pivot.zd < lo_a < pivot.zg:
+            k += 1
+            continue
+        sl = lo_a - _STOP_LOSS_BUFFER_RATIO * pivot_h
+        out.append(
+            _signal(
+                candles=candles,
+                side=SignalSide.BUY,
+                kind="second_class",
+                idx=c.end_idx,
+                price=c.end_price,
+                description="形态二买：后段低点高于前段低点（独立检测，无需背驰）",
+                strength=0.55,
+                pivot_level=pivot_lv,
+                pivot_idx=pivot_idx,
+                entry_seg_idx=k,
+                leave_seg_idx=k + 2,
+                macd_ratio=None,
+                evidence=f"{'笔' if pivot_lv == 'bi' else '线段'}中枢#{pivot_idx}，形态二买 #{k}..#{k + 2}，抬升{((lo_c - lo_a) / lo_a * 100):.2f}%",
+                level=sig_level,
+                stop_loss=sl,
+                take_profit=c.end_price + 2 * (c.end_price - sl),
+                take_profit_1=c.end_price + (c.end_price - sl),
+            )
+        )
+        break  # 只取第一个匹配
+
+    # SELL: UP(a) → DOWN(b) → UP(c), hi_c < hi_a
+    k = pivot.end_bi + 1
+    while k + 2 < end_k:
+        a = movements[k]
+        if a.direction != Direction.UP:
+            k += 1
+            continue
+        b = movements[k + 1]
+        if b.direction != Direction.DOWN:
+            k += 1
+            continue
+        c = movements[k + 2]
+        if c.direction != Direction.UP:
+            k += 1
+            continue
+        hi_a = max(a.start_price, a.end_price)
+        hi_c = max(c.start_price, c.end_price)
+        if hi_c >= hi_a:
+            k += 1
+            continue
+        if (hi_a - hi_c) / max(hi_a, 1e-9) < 0.001:
+            k += 1
+            continue
+        if pivot.zd < hi_a < pivot.zg:
+            k += 1
+            continue
+        sl = hi_a + _STOP_LOSS_BUFFER_RATIO * pivot_h
+        out.append(
+            _signal(
+                candles=candles,
+                side=SignalSide.SELL,
+                kind="second_class",
+                idx=c.end_idx,
+                price=c.end_price,
+                description="形态二卖：后段高点低于前段高点（独立检测，无需背驰）",
+                strength=0.55,
+                pivot_level=pivot_lv,
+                pivot_idx=pivot_idx,
+                entry_seg_idx=k,
+                leave_seg_idx=k + 2,
+                macd_ratio=None,
+                evidence=f"{'笔' if pivot_lv == 'bi' else '线段'}中枢#{pivot_idx}，形态二卖 #{k}..#{k + 2}，压低{((hi_a - hi_c) / hi_a * 100):.2f}%",
+                level=sig_level,
+                stop_loss=sl,
+                take_profit=c.end_price - 2 * (sl - c.end_price),
+                take_profit_1=c.end_price - (sl - c.end_price),
+            )
+        )
+        break  # 只取第一个匹配
 
     return out
 

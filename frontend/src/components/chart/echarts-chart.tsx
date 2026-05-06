@@ -87,7 +87,7 @@ export function EChartsChart() {
         chartSymbol: symbol,
         chartInterval: interval,
       },
-    });
+    }, interval);
   }, [
     lastResult,
     layers,

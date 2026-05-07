@@ -19,6 +19,6 @@ export const RECURSION_COMP_LABEL: Record<string, string> = {
 };
 
 export const KIND_NAME: Record<string, string> = {
-  first: "一类", second: "二类", second_extend: "二类延伸",
-  third: "三类", second_class: "类二", third_class: "类三", td9: "TD9",
+  first: "①一类", second: "②二类", second_extend: "②'二类延伸",
+  third: "③三类", second_class: "②'类二", third_class: "③'类三", td9: "⑨TD9",
 };

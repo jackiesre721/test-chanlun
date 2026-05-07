@@ -21,3 +21,13 @@ export function recursionBadgeClass(comp: string | null | undefined): string {
   if (comp.startsWith("aligned")) return "adv-badge aligned";
   return "adv-badge neutral";
 }
+
+export function fmtPrice(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function fmtRR(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toFixed(1);
+}

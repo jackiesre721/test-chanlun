@@ -101,7 +101,7 @@ export function RiskCalculator() {
                 <>
                   <Input
                     aria-label="账户权益（USDT）"
-                    placeholder="权益 USDT"
+                    placeholder="如 10000"
                     type="number"
                     value={equity}
                     onChange={(e) => setEquity(e.target.value)}
@@ -109,7 +109,7 @@ export function RiskCalculator() {
                   />
                   <Input
                     aria-label="单笔最大亏损占净值比例（如 0.01）"
-                    placeholder="风险比例 (如 0.01)"
+                    placeholder="如 0.01"
                     type="number"
                     value={fraction}
                     onChange={(e) => setFraction(e.target.value)}
@@ -120,24 +120,36 @@ export function RiskCalculator() {
               ) : (
                 <Input
                   aria-label="固定持仓数量（标的数量）"
-                  placeholder="固定数量（如 0.01 BTC）"
+                  placeholder="如 0.01 BTC"
                   type="number"
                   value={fixed_quantity}
                   onChange={(e) => setFixedQuantity(e.target.value)}
                   className="text-sm col-span-2"
                 />
               )}
-              <Input
-                aria-label="入场价（风控试算）"
-                placeholder="入场价"
-                type="number"
-                value={entry}
-                onChange={(e) => setEntry(e.target.value)}
-                className="text-sm"
-              />
+              <div className="relative">
+                <Input
+                  aria-label="入场价（风控试算）"
+                  placeholder="如 94500"
+                  type="number"
+                  value={entry}
+                  onChange={(e) => setEntry(e.target.value)}
+                  className="text-sm"
+                />
+                {lastResult?.current_price && (
+                  <button
+                    type="button"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] px-1.5 py-0.5 rounded bg-surface-accent text-accent hover:bg-surface-active transition-colors"
+                    onClick={fillFromChart}
+                    title="填入当前价格"
+                  >
+                    现价
+                  </button>
+                )}
+              </div>
               <Input
                 aria-label="止损价（风控试算）"
-                placeholder="止损价"
+                placeholder="如 93000"
                 type="number"
                 value={stop}
                 onChange={(e) => setStop(e.target.value)}
@@ -179,9 +191,6 @@ export function RiskCalculator() {
             )}
 
             <div className="flex gap-2 flex-wrap items-center">
-              <Button size="sm" variant="ghost" onPress={fillFromChart}>
-                填入现价
-              </Button>
               {sizing_mode === "risk_fraction" ? (
                 <Button size="sm" variant="primary" onPress={compute} isDisabled={computing}>
                   {computing ? "计算中…" : "计算"}
@@ -199,7 +208,7 @@ export function RiskCalculator() {
               <div className="text-xs text-negative">{error}</div>
             )}
             {result && sizing_mode === "risk_fraction" && (
-              <div className="text-xs space-y-1 mt-2 p-2 rounded bg-surface-hover">
+              <div className="text-xs space-y-1 mt-2 p-2 rounded bg-surface-hover animate-slide-up">
                 <div>
                   数量：<b>{result.quantity?.toFixed(6)}</b>
                 </div>

@@ -1,4 +1,4 @@
-import { Button, ButtonGroup } from "@heroui/react";
+import { Button, ButtonGroup, Checkbox } from "@heroui/react";
 import { useSettingsStore } from "@/stores/settings-store";
 
 const PRESETS = [
@@ -10,6 +10,9 @@ const PRESETS = [
 export function LayerPresets() {
   const activePreset = useSettingsStore((s) => s.activePreset);
   const applyPreset = useSettingsStore((s) => s.applyPreset);
+  const compactSubplots = useSettingsStore((s) => s.compactSubplots);
+  const toggleCompactSubplots = useSettingsStore((s) => s.toggleCompactSubplots);
+  const toggleCompactToolbar = useSettingsStore((s) => s.toggleCompactToolbar);
 
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-t border-border-subtle">
@@ -25,7 +28,17 @@ export function LayerPresets() {
           </Button>
         ))}
       </ButtonGroup>
-      <span className="text-[10px] text-text-muted">一键勾选后可逐项微调；鼠标悬停查看说明。</span>
+      <Checkbox
+        aria-label="紧凑副图"
+        isSelected={compactSubplots}
+        onChange={() => toggleCompactSubplots()}
+      >
+        <span className="text-[10px]">紧凑副图</span>
+      </Checkbox>
+      <div className="flex-1" />
+      <Button size="sm" variant="ghost" className="text-[10px]" onPress={toggleCompactToolbar}>
+        收起
+      </Button>
     </div>
   );
 }

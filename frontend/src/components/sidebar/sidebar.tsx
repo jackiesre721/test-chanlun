@@ -15,7 +15,7 @@ import { GlmConfigCard } from "./glm-config-card";
 import { SignalPerformanceCard } from "./signal-performance-card";
 
 const TAB_PANEL_CLASS =
-  "flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3 outline-none data-[focus-visible=true]:outline-none";
+  "flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3.5 outline-none data-[focus-visible=true]:outline-none";
 
 export function Sidebar() {
   const sidebarTab = useSettingsStore((s) => s.sidebarTab);
@@ -40,13 +40,13 @@ export function Sidebar() {
               当下
             </Tabs.Tab>
             <Tabs.Tab id="risk" className="sidebar-tab shrink-0">
-              执行与风控
+              执行
             </Tabs.Tab>
             <Tabs.Tab id="research" className="sidebar-tab shrink-0">
-              研究与回测
+              研究
             </Tabs.Tab>
             <Tabs.Tab id="ref" className="sidebar-tab shrink-0">
-              参考与设置
+              设置
             </Tabs.Tab>
           </Tabs.List>
         </Tabs.ListContainer>

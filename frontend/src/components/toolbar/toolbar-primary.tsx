@@ -1,4 +1,4 @@
-import { Select, ListBox, Button, Checkbox } from "@heroui/react";
+import { Select, ListBox, Button } from "@heroui/react";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useAnalysisStore } from "@/stores/analysis-store";
 import { useEffect } from "react";
@@ -18,8 +18,8 @@ const INTERVAL_OPTIONS = [
 ];
 
 export function ToolbarPrimary() {
-  const { symbol, interval, dynamicSymbols, compactToolbar, hideSidebar, compactSubplots,
-    setSymbol, setInterval, setDynamicSymbols, toggleCompactToolbar, toggleHideSidebar, toggleCompactSubplots } = useSettingsStore();
+  const { symbol, interval, dynamicSymbols, compactToolbar, hideSidebar,
+    setSymbol, setInterval, setDynamicSymbols, toggleCompactToolbar, toggleHideSidebar } = useSettingsStore();
   const { analyze, analyzing } = useAnalysisStore();
 
   const allSymbols = dynamicSymbols.length > 0 ? dynamicSymbols : ["BTCUSDT", "ETHUSDT"];
@@ -102,19 +102,14 @@ export function ToolbarPrimary() {
 
       {/* Layout toggles */}
       <div className="flex items-center gap-2">
-        <Button size="sm" variant="ghost" onPress={toggleCompactToolbar}>
-          {compactToolbar ? "展开控件" : "收起控件"}
-        </Button>
         <Button size="sm" variant="ghost" onPress={toggleHideSidebar}>
           {hideSidebar ? "显示侧栏" : "隐藏侧栏"}
         </Button>
-        <Checkbox
-          aria-label="紧凑副图：抬高主图并压缩 MACD、RSI 副图高度"
-          isSelected={compactSubplots}
-          onChange={() => toggleCompactSubplots()}
-        >
-          紧凑副图
-        </Checkbox>
+        {compactToolbar && (
+          <Button size="sm" variant="ghost" onPress={toggleCompactToolbar}>
+            展开控件
+          </Button>
+        )}
       </div>
 
       <div className="flex-1" />

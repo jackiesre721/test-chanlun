@@ -173,6 +173,36 @@ def journal_get(trade_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def journal_add_manual(date: str, side: str, signal_type: str, entry_price: float,
+                       stop_loss: float, take_profit_1: float, quantity: float,
+                       margin: float, status: str, actual_entry: float | None,
+                       actual_exit: float | None, pnl_usdt: float | None,
+                       notes: str = "") -> int:
+    now = datetime.now(_CST).strftime("%Y-%m-%d %H:%M:%S")
+    conn = _db()
+    cur = conn.execute(
+        """INSERT INTO trades
+           (date, symbol, side, signal_type, signal_time,
+            entry_price, stop_loss, take_profit_1, take_profit_2,
+            quantity, margin, risk_usdt, status,
+            actual_entry, actual_exit, pnl_usdt, pnl_pct,
+            notes, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            date, SYMBOL, side, signal_type, "",
+            entry_price, stop_loss, take_profit_1, 0,
+            quantity, margin, 0, status,
+            actual_entry, actual_exit, pnl_usdt,
+            round(pnl_usdt / margin * 100, 2) if pnl_usdt is not None and margin else None,
+            notes, now, now,
+        ),
+    )
+    trade_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return trade_id
+
+
 # ---------------------------------------------------------------------------
 # HTTP helpers (stdlib only)
 # ---------------------------------------------------------------------------
@@ -556,6 +586,25 @@ def cmd_review(args) -> None:
     print(f"复盘报告已发送! message_id={msg_id}")
 
 
+def cmd_add(args) -> None:
+    trade_id = journal_add_manual(
+        date=args.date,
+        side=args.side,
+        signal_type=args.signal_type,
+        entry_price=args.entry,
+        stop_loss=args.sl,
+        take_profit_1=args.tp or 0,
+        quantity=args.qty,
+        margin=args.margin or 0,
+        status=args.status,
+        actual_entry=args.actual_entry,
+        actual_exit=args.actual_exit,
+        pnl_usdt=args.pnl,
+        notes=args.notes or "",
+    )
+    print(f"手动补录成功! 记录 #{trade_id}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -586,6 +635,23 @@ def main() -> None:
     p_review = sub.add_parser("review", help="推送复盘报告到飞书")
     p_review.add_argument("--dry-run", action="store_true")
 
+    # add
+    p_add = sub.add_parser("add", help="手动补录交易记录")
+    p_add.add_argument("--date", required=True, help="日期 YYYY-MM-DD")
+    p_add.add_argument("--side", required=True, choices=["BUY", "SELL"], help="方向")
+    p_add.add_argument("--signal-type", required=True, dest="signal_type", help="信号类型 如 二类买点")
+    p_add.add_argument("--entry", type=float, required=True, help="入场价")
+    p_add.add_argument("--sl", type=float, required=True, help="止损价")
+    p_add.add_argument("--tp", type=float, help="止盈价")
+    p_add.add_argument("--qty", type=float, required=True, help="数量")
+    p_add.add_argument("--margin", type=float, help="保证金")
+    p_add.add_argument("--status", required=True,
+                       choices=["pending", "filled", "closed", "sl_hit", "tp_hit", "cancelled"])
+    p_add.add_argument("--actual-entry", type=float, help="实际入场价")
+    p_add.add_argument("--actual-exit", type=float, help="实际出场价")
+    p_add.add_argument("--pnl", type=float, help="盈亏 USDT")
+    p_add.add_argument("--notes", help="备注")
+
     args = ap.parse_args()
 
     # Default to push if no subcommand
@@ -599,6 +665,7 @@ def main() -> None:
         "log": cmd_log,
         "update": cmd_update,
         "review": cmd_review,
+        "add": cmd_add,
     }
     cmds[args.command](args)
 

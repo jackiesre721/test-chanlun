@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import ssl
@@ -256,7 +257,7 @@ def calc_position(entry: float, sl: float) -> dict:
     else:
         liq = entry * (1 + 1 / LEVERAGE - MAINT_RATE)
     return {
-        "qty": round(qty, 4),
+        "qty": math.floor(qty * 100) / 100,
         "notional": round(notional, 2),
         "margin": round(margin, 2),
         "liq": round(liq, 2),

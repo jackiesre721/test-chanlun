@@ -19,7 +19,7 @@ const INTERVAL_OPTIONS = [
 
 export function ToolbarPrimary() {
   const { symbol, interval, dynamicSymbols, compactToolbar, hideSidebar,
-    setSymbol, setInterval, setDynamicSymbols, toggleCompactToolbar, toggleHideSidebar } = useSettingsStore();
+    setSymbol, setInterval, setDynamicSymbols, toggleCompactToolbar, toggleHideSidebar, setViewMode } = useSettingsStore();
   const { analyze, analyzing } = useAnalysisStore();
 
   const allSymbols = dynamicSymbols.length > 0 ? dynamicSymbols : ["BTCUSDT", "ETHUSDT"];
@@ -102,6 +102,9 @@ export function ToolbarPrimary() {
 
       {/* Layout toggles */}
       <div className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setViewMode("trading")}>
+          实盘
+        </Button>
         <Button size="sm" variant="ghost" onPress={toggleHideSidebar}>
           {hideSidebar ? "显示侧栏" : "隐藏侧栏"}
         </Button>

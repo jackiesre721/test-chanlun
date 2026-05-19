@@ -177,6 +177,47 @@ export async function postVerdict(body: Record<string, unknown>, signal?: AbortS
   throw new Error("所有 verdict 端点均不可用");
 }
 
+export async function getAccountSummary(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${apiPrefix()}/trade/account`);
+  if (!res.ok) throw new Error(`获取账户失败: ${res.status}`);
+  return res.json();
+}
+
+export async function getPositions(status?: string): Promise<Record<string, unknown>> {
+  const url = status ? `${apiPrefix()}/trade/positions?status=${status}` : `${apiPrefix()}/trade/positions`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`获取持仓失败: ${res.status}`);
+  return res.json();
+}
+
+export async function closePosition(positionId: string, exitPrice: number): Promise<Record<string, unknown>> {
+  const res = await fetch(`${apiPrefix()}/trade/close/${positionId}?exit_price=${exitPrice}`, { method: "POST" });
+  if (!res.ok) throw new Error(`平仓失败: ${res.status}`);
+  return res.json();
+}
+
+export async function getTradeJournal(limit = 50, symbol?: string): Promise<Record<string, unknown>> {
+  const url = symbol
+    ? `${apiPrefix()}/trade/journal?limit=${limit}&symbol=${symbol}`
+    : `${apiPrefix()}/trade/journal?limit=${limit}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`获取交易日志失败: ${res.status}`);
+  return res.json();
+}
+
+export async function updateTradeReview(
+  positionId: string,
+  tags: string,
+  notes: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(
+    `${apiPrefix()}/trade/journal/${positionId}/review?tags=${encodeURIComponent(tags)}&notes=${encodeURIComponent(notes)}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(`更新复盘失败: ${res.status}`);
+  return res.json();
+}
+
 export async function getSymbols(): Promise<SymbolOption[]> {
   try {
     const res = await fetch(`${apiPrefix()}/api/symbols`);

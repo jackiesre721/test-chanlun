@@ -13,6 +13,8 @@ import { ExplanationCard } from "./explanation-card";
 import { AdvancedStructureCard } from "./advanced-structure-card";
 import { GlmConfigCard } from "./glm-config-card";
 import { SignalPerformanceCard } from "./signal-performance-card";
+import { TradingDashboard } from "@/components/trading/trading-dashboard";
+import { TradeJournal } from "@/components/trading/trade-journal";
 
 const TAB_PANEL_CLASS =
   "flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3.5 outline-none data-[focus-visible=true]:outline-none";
@@ -22,7 +24,7 @@ export function Sidebar() {
   const setSidebarTab = useSettingsStore((s) => s.setSidebarTab);
 
   const onTabChange = (key: unknown) => {
-    if (typeof key === "string" && ["now", "risk", "research", "ref"].includes(key)) {
+    if (typeof key === "string" && ["now", "trade", "risk", "research", "ref"].includes(key)) {
       setSidebarTab(key as SidebarTabKey);
     }
   };
@@ -38,6 +40,9 @@ export function Sidebar() {
           <Tabs.List className="flex flex-wrap gap-0.5">
             <Tabs.Tab id="now" className="sidebar-tab shrink-0">
               当下
+            </Tabs.Tab>
+            <Tabs.Tab id="trade" className="sidebar-tab shrink-0">
+              交易
             </Tabs.Tab>
             <Tabs.Tab id="risk" className="sidebar-tab shrink-0">
               执行
@@ -56,6 +61,11 @@ export function Sidebar() {
           <ActionFocusCard />
           <SignalsCard />
           <StructureStatusCard />
+        </Tabs.Panel>
+
+        <Tabs.Panel id="trade" className={TAB_PANEL_CLASS}>
+          <TradingDashboard />
+          <TradeJournal />
         </Tabs.Panel>
 
         <Tabs.Panel id="risk" className={TAB_PANEL_CLASS}>

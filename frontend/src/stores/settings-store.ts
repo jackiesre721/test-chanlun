@@ -2,8 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DEFAULT_LAYERS, LAYER_PRESETS, type LayerState, type LayerKey } from "@/constants/layer-presets";
 
-/** 侧栏 Tabs：`当下 | 执行与风控 | 研究与回测 | 参考与设置` */
-export type SidebarTabKey = "now" | "risk" | "research" | "ref";
+export type SidebarTabKey = "now" | "trade" | "risk" | "research" | "ref";
+export type ViewMode = "chart" | "trading";
 
 interface SettingsState {
   symbol: string;
@@ -15,7 +15,9 @@ interface SettingsState {
   activePreset: string;
   dynamicSymbols: string[];
   sidebarTab: SidebarTabKey;
+  viewMode: ViewMode;
   setSidebarTab: (k: SidebarTabKey) => void;
+  setViewMode: (v: ViewMode) => void;
   setSymbol: (s: string) => void;
   setInterval: (i: string) => void;
   toggleLayer: (key: LayerKey) => void;
@@ -29,7 +31,7 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      symbol: "BTCUSDT",
+      symbol: "SOLUSDT",
       interval: "30",
       layers: { ...DEFAULT_LAYERS },
       compactToolbar: false,
@@ -38,8 +40,10 @@ export const useSettingsStore = create<SettingsState>()(
       activePreset: "watch",
       dynamicSymbols: [],
       sidebarTab: "now",
+      viewMode: "chart",
 
       setSidebarTab: (sidebarTab) => set({ sidebarTab }),
+      setViewMode: (viewMode) => set({ viewMode }),
       setSymbol: (s) => set({ symbol: s }),
       setInterval: (i) => set({ interval: i }),
       toggleLayer: (key) =>

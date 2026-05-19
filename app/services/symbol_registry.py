@@ -9,7 +9,7 @@ from app.repositories.market_data import BinanceRepository
 log = logging.getLogger(__name__)
 
 # Fixed whitelist — all USD-M futures.
-_ALLOWED = frozenset({"BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "DOGEUSDT"})
+_ALLOWED = frozenset({"SOLUSDT"})
 
 
 async def refresh_symbols(repository: BinanceRepository) -> None:

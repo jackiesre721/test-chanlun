@@ -180,24 +180,40 @@ def build_analyze_bundle_from_normalized(
         if not _passes_filter(s):
             s.rr_filtered = True
 
-    # 段级别信号：计算笔级别止损（stop_loss_2）
+    # 段级别信号：计算笔级别止损（stop_loss_2）— ATR-based
     _THIRD_KINDS_SL = {"third", "third_class"}
+    _sl_atr_val: float | None = None
+    if len(normalized) > 16:
+        try:
+            from app.services.indicators import atr_last_wilder
+            _h = [c.high for c in normalized]
+            _l = [c.low for c in normalized]
+            _c = [c.close for c in normalized]
+            _sl_atr_val = atr_last_wilder(_h, _l, _c, 14)
+        except Exception:
+            pass
     for sig in all_buy + all_sell:
         if sig.level != "segment" or sig.stop_loss is None:
             continue
-        # Find bi pivot whose range contains the signal index
         for bp in bi_pivots:
             if bp.start_idx <= sig.idx <= bp.end_idx:
-                if sig.side == SignalSide.BUY:
-                    if sig.kind in _THIRD_KINDS_SL:
-                        sig.stop_loss_2 = bp.zg - 0.15 * (bp.zg - bp.zd)
+                pivot_h = bp.zg - bp.zd
+                if _sl_atr_val is not None and _sl_atr_val > 0:
+                    if sig.side == SignalSide.BUY:
+                        sig.stop_loss_2 = bp.zd - 2.0 * _sl_atr_val
                     else:
-                        sig.stop_loss_2 = bp.zd - 0.15 * (bp.zg - bp.zd)
+                        sig.stop_loss_2 = bp.zg + 2.0 * _sl_atr_val
                 else:
-                    if sig.kind in _THIRD_KINDS_SL:
-                        sig.stop_loss_2 = bp.zd + 0.15 * (bp.zg - bp.zd)
+                    if sig.side == SignalSide.BUY:
+                        if sig.kind in _THIRD_KINDS_SL:
+                            sig.stop_loss_2 = bp.zg - 0.15 * pivot_h
+                        else:
+                            sig.stop_loss_2 = bp.zd - 0.15 * pivot_h
                     else:
-                        sig.stop_loss_2 = bp.zg + 0.15 * (bp.zg - bp.zd)
+                        if sig.kind in _THIRD_KINDS_SL:
+                            sig.stop_loss_2 = bp.zd + 0.15 * pivot_h
+                        else:
+                            sig.stop_loss_2 = bp.zg + 0.15 * pivot_h
                 break
 
     buy_signals = [s for s in all_buy if not s.rr_filtered][-30:]

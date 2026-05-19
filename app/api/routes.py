@@ -1,6 +1,7 @@
+import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from app.api.dependencies import get_analyzer_service, get_market_repository
 from app.core.config import settings
@@ -24,6 +25,9 @@ from app.core.models import (
     TrailingStopRequest,
     TrailingStopResponse,
 )
+from app.trading.paper_engine import PaperEngine
+from app.services.daily_report import build_daily_report, send_daily_report
+from app.services.strategy_optimizer import StrategyOptimizer
 from app.repositories.market_data import BinanceRepository
 from app.services.bar_generator import aggregate_candles_to_minutes
 from app.services.analyzer import AnalyzerService
@@ -146,3 +150,158 @@ async def ai_verdict(body: dict[str, Any] = Body(...)) -> AiVerdictResponse:
 
     同时挂载 `/analyze/verdict`、`/api/ai/verdict`：部分网关只转发 `/analyze` 或 `/api/*`，避免仅 `/ai/verdict` 返回 404。"""
     return await verdict_from_analyze_payload(body)
+
+
+# ── Paper Trading Engine ──
+
+_engine = PaperEngine(
+    initial_equity=settings.trading_initial_equity,
+    leverage=settings.trading_leverage,
+    risk_fraction=settings.trading_risk_fraction,
+    max_positions=settings.trading_max_positions,
+)
+
+_price_feed: object | None = None
+
+
+def set_price_feed(feed) -> None:
+    global _price_feed
+    _price_feed = feed
+
+
+@router.get("/trade/account")
+def trade_account() -> dict:
+    prices = _price_feed.get_all_prices() if _price_feed else None
+    return _engine.get_account_summary(prices).model_dump()
+
+
+@router.get("/trade/positions")
+def trade_positions(status: str | None = None) -> dict:
+    return {"positions": [p.model_dump() for p in _engine.get_positions(status)]}
+
+
+@router.get("/trade/orders")
+def trade_orders(limit: int = 100) -> dict:
+    return {"orders": [o.model_dump() for o in _engine.get_orders(limit)]}
+
+
+@router.get("/trade/journal")
+def trade_journal(limit: int = 50, symbol: str | None = None) -> dict:
+    return {"journal": _engine.get_trade_journal(limit, symbol)}
+
+
+@router.post("/trade/journal/{position_id}/review")
+def trade_journal_review(position_id: str, tags: str = "", notes: str = "") -> dict:
+    if _engine.update_trade_review(position_id, tags, notes):
+        return {"updated": True, "position_id": position_id}
+    raise HTTPException(status_code=404, detail="Journal entry not found")
+
+
+@router.post("/trade/close/{position_id}")
+def trade_close(position_id: str, exit_price: float) -> dict:
+    positions = _engine.get_positions()
+    found = [p for p in positions if p.position_id == position_id and p.status in ("open", "partial_closed")]
+    if not found:
+        raise HTTPException(status_code=404, detail="Position not found or already closed")
+    pnl = _engine.close_position(position_id, exit_price, "manual")
+    return {"position_id": position_id, "realized_pnl": pnl, "status": "closed"}
+
+
+@router.get("/trade/report")
+def trade_report() -> dict:
+    return build_daily_report(_engine)
+
+
+@router.post("/trade/report/send")
+async def trade_report_send() -> dict:
+    msg_id = await send_daily_report(
+        _engine,
+        settings.feishu_app_id,
+        settings.feishu_app_secret,
+        settings.feishu_chat_id,
+    )
+    if msg_id:
+        return {"sent": True, "message_id": msg_id}
+    return {"sent": False, "reason": "Feishu not configured or send failed"}
+
+
+# ── Strategy Optimizer ──
+
+_optimizer = StrategyOptimizer()
+
+
+@router.get("/trade/optimization/results")
+def optimization_results(limit: int = 20) -> dict:
+    return {"runs": _optimizer.get_all_runs(limit)}
+
+
+@router.get("/trade/optimization/best")
+def optimization_best() -> dict:
+    best = _optimizer.get_best()
+    if not best:
+        return {"best": None}
+    return {
+        "run_id": best.run_id,
+        "params": best.params,
+        "avg_score": round(best.avg_score, 4),
+        "scores": {k: round(v, 4) for k, v in best.scores.items()},
+        "status": best.status,
+    }
+
+
+@router.post("/trade/optimization/run")
+async def optimization_run(repository: BinanceRepository = Depends(get_market_repository)) -> dict:
+    best = await _optimizer.run_optimization(repository)
+    if not best:
+        raise HTTPException(status_code=500, detail="Optimization produced no results")
+    return {
+        "run_id": best.run_id,
+        "params": best.params,
+        "avg_score": round(best.avg_score, 4),
+        "status": "pending_approval",
+    }
+
+
+@router.post("/trade/optimization/approve/{run_id}")
+def optimization_approve(run_id: str) -> dict:
+    if _optimizer.approve(run_id):
+        return {"approved": True, "run_id": run_id}
+    raise HTTPException(status_code=404, detail="Run not found or not pending")
+
+
+@router.post("/trade/optimization/reject/{run_id}")
+def optimization_reject(run_id: str) -> dict:
+    if _optimizer.reject(run_id):
+        return {"rejected": True, "run_id": run_id}
+    raise HTTPException(status_code=404, detail="Run not found or not pending")
+
+
+# ── WebSocket ──
+
+_event_bus = None
+
+
+def set_event_bus(bus) -> None:
+    global _event_bus
+    _event_bus = bus
+
+
+@router.websocket("/ws/trading")
+async def ws_trading(websocket: WebSocket) -> None:
+    await websocket.accept()
+    if _event_bus is None:
+        await websocket.send_json({"type": "error", "message": "EventBus not initialized"})
+        await websocket.close()
+        return
+
+    queue = _event_bus.subscribe()
+    try:
+        while True:
+            msg = await queue.get()
+            await websocket.send_json(msg)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _event_bus.unsubscribe(queue)

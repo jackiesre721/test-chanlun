@@ -8,8 +8,11 @@ def ema(values: list[float], period: int) -> list[float]:
     if not values:
         return []
     alpha = 2 / (period + 1)
-    out = [values[0]]
-    for value in values[1:]:
+    seed = sum(values[:period]) / min(period, len(values))
+    out = [seed]
+    for i, value in enumerate(values):
+        if i == 0:
+            continue
         out.append((value * alpha) + (out[-1] * (1 - alpha)))
     return out
 

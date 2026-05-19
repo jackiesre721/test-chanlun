@@ -23,15 +23,21 @@ from app.core.models import (
 )
 from app.repositories.market_data import BinanceRepository
 from app.services.analyzer import HIGHER_INTERVAL, project_higher_onto_base
-from app.services.analysis_pipeline import build_analyze_bundle
+from app.services.analysis_pipeline import build_analyze_bundle, build_analyze_bundle_from_normalized
+from app.services.chan_engine import normalize_candles
 
 # ── Phase 1 strategy parameters ──
 
 # Signal kinds to skip entirely
-_SKIP_KINDS: frozenset[str] = frozenset({"first", "third_class"})
+_SKIP_KINDS: frozenset[str] = frozenset({"third", "third_class"})
 
 # Signal kinds that use half margin
 _HALF_MARGIN_KINDS: frozenset[str] = frozenset({"second_extend", "second_class"})
+
+# Walk-forward parameters
+_WF_LOOKBACK = 500
+_WF_STEP = 200
+_WF_MIN_BARS = 60
 
 
 @dataclass
@@ -177,7 +183,7 @@ def _simulate(
         closed_side: Literal["LONG", "SHORT"] = "LONG" if pos_qty > 0 else "SHORT"
 
         if pos_qty > 0:
-            pnl = pos_qty * close_px * (1 - fee_rate) - pos_qty * pos_entry
+            pnl = pos_qty * close_px * (1 - fee_rate) - pos_qty * pos_entry * (1 + fee_rate)
         else:
             pnl = (
                 abs(pos_qty) * pos_entry * (1 - fee_rate)
@@ -264,13 +270,14 @@ def _simulate(
 
         if pos_qty != 0 and lev > 1:
             liq_hit = False
+            _maint_rate = 0.004
             if pos_qty > 0:
-                liq_px = pos_entry * (1 - 1 / lev)
+                liq_px = pos_entry * (1 - 1 / lev + _maint_rate)
                 if candle.low <= liq_px:
                     _close(bar_idx, candle.time, liq_px, "liquidation")
                     liq_hit = True
             else:
-                liq_px = pos_entry * (1 + 1 / lev)
+                liq_px = pos_entry * (1 + 1 / lev - _maint_rate)
                 if candle.high >= liq_px:
                     _close(bar_idx, candle.time, liq_px, "liquidation")
                     liq_hit = True
@@ -293,7 +300,6 @@ def _simulate(
                     continue
                 if pos_qty > 0:
                     _close(bar_idx, candle.time, px, "signal")
-                    continue
                 if strategy == "long_only_flip":
                     continue
                 _open(sig, px, candle, "SELL")
@@ -379,6 +385,17 @@ async def run_quick_backtest(repository: BinanceRepository, request: QuickBackte
             request.symbol, request.interval, settings.backtest_max_bars
         )
 
+    normalized = normalize_candles(candles)
+
+    # Walk-forward signal generation to eliminate lookahead bias
+    wf_buy, wf_sell = _walk_forward_signals(
+        normalized,
+        market=request.market,
+        symbol=request.symbol,
+        interval=request.interval,
+    )
+
+    # Full analysis for pivots (strategy filter needs them)
     hi_key = HIGHER_INTERVAL.get(request.interval)
     higher_strokes: list = []
     higher_pivots: list = []
@@ -407,17 +424,15 @@ async def run_quick_backtest(repository: BinanceRepository, request: QuickBackte
     tr = bundle.response.advanced_context.trend_recursion
     if tr:
         composite = tr.composite
-    filtered_buy, filtered_sell = _apply_resonance_filter(
-        bundle.all_buy_signals, bundle.all_sell_signals, composite,
-    )
 
-    # Phase 1: strategy filter (kind + pivot zone)
+    # Apply resonance + strategy filters to walk-forward signals
+    filtered_buy, filtered_sell = _apply_resonance_filter(wf_buy, wf_sell, composite)
     filtered_buy, filtered_sell = _apply_strategy_filter(
         filtered_buy, filtered_sell, bundle.response.zhongshus,
     )
 
     trades, round_trips, final_eq, max_dd = _simulate(
-        candles,
+        normalized,
         strategy=request.strategy,
         fee_bps=request.fee_bps,
         initial_equity_usdt=request.initial_equity_usdt,
@@ -458,3 +473,64 @@ async def run_quick_backtest(repository: BinanceRepository, request: QuickBackte
         closed_trades=round_trips,
         stats_by_signal_kind=stats_by_kind,
     )
+
+
+def _walk_forward_signals(
+    normalized: list[Candle],
+    *,
+    market,
+    symbol: str,
+    interval: str,
+) -> tuple[list[Signal], list[Signal]]:
+    """Batched walk-forward analysis to eliminate lookahead bias.
+
+    Splits normalized candles into overlapping windows, analyzes each
+    independently, and collects signals only from the "new" portion
+    of each window.
+    """
+    all_buy: list[Signal] = []
+    all_sell: list[Signal] = []
+
+    for window_end in range(_WF_LOOKBACK, len(normalized) + _WF_STEP, _WF_STEP):
+        actual_end = min(window_end, len(normalized))
+        window_start = max(0, actual_end - _WF_LOOKBACK)
+        window = normalized[window_start:actual_end]
+
+        if len(window) < _WF_MIN_BARS:
+            continue
+
+        try:
+            bundle = build_analyze_bundle_from_normalized(
+                window,
+                market=market,
+                symbol=symbol,
+                interval=interval,
+                higher_strokes=[],
+                higher_pivots=[],
+                source_raw_bar_count=len(window),
+            )
+        except Exception:
+            continue
+
+        # Only keep signals from the recent portion of the window
+        cutoff = max(0, len(window) - _WF_STEP * 2)
+
+        for sig in bundle.all_buy_signals:
+            if not sig.rr_filtered and sig.idx >= cutoff:
+                all_buy.append(sig.model_copy(update={"idx": sig.idx + window_start}))
+        for sig in bundle.all_sell_signals:
+            if not sig.rr_filtered and sig.idx >= cutoff:
+                all_sell.append(sig.model_copy(update={"idx": sig.idx + window_start}))
+
+    return _dedup_signals(all_buy), _dedup_signals(all_sell)
+
+
+def _dedup_signals(signals: list[Signal]) -> list[Signal]:
+    seen: set[tuple] = set()
+    out: list[Signal] = []
+    for s in sorted(signals, key=lambda s: s.idx):
+        key = (s.idx, s.side, s.kind)
+        if key not in seen:
+            seen.add(key)
+            out.append(s)
+    return out

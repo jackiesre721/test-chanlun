@@ -741,6 +741,7 @@ def _build_segments_strict67(strokes: list[Stroke]) -> list[Segment]:
 
 
 def build_pivots(strokes: list[Stroke]) -> list[Pivot]:
+    """笔中枢：连续三笔价位区间有重叠即形成 [ZD,ZG]，再延伸仍与 [ZD,ZG] 相交的后续笔。"""
     pivots: list[Pivot] = []
     i = 0
     while i <= len(strokes) - 3:
@@ -749,25 +750,63 @@ def build_pivots(strokes: list[Stroke]) -> list[Pivot]:
         lows = [min(stroke.start_price, stroke.end_price) for stroke in window]
         zg = min(highs)
         zd = max(lows)
-        if zd < zg:
+        if zd >= zg:
+            i += 1
+            continue
+
+        # Extend while subsequent strokes still overlap [ZD,ZG] (同 build_segment_pivots 逻辑)
+        core_end = i + 2
+        leaving_idx = i + 3
+        while leaving_idx < len(strokes) and _segment_overlaps_range(strokes[leaving_idx], zd, zg):
+            core_end = leaving_idx
+            leaving_idx += 1
+
+        # Recalculate ZD/ZG from all included strokes
+        span = strokes[i : core_end + 1]
+        lows = [min(st.start_price, st.end_price) for st in span]
+        highs = [max(st.start_price, st.end_price) for st in span]
+        zd = max(lows)
+        zg = min(highs)
+        if zd >= zg:
+            i += 1
+            continue
+
+        entry_seg_idx = i - 1 if i > 0 else None
+
+        if leaving_idx >= len(strokes):
             pivots.append(
                 Pivot(
                     start_bi=i,
-                    end_bi=i + 2,
+                    end_bi=core_end,
                     start_idx=strokes[i].start_idx,
-                    end_idx=strokes[i + 2].end_idx,
+                    end_idx=strokes[core_end].end_idx,
                     zg=zg,
                     zd=zd,
                     level="bi",
-                    entry_seg_idx=i - 1 if i > 0 else None,
-                    leave_seg_idx=i + 3 if i + 3 < len(strokes) else None,
-                    direction=strokes[i + 3].direction if i + 3 < len(strokes) else None,
+                    entry_seg_idx=entry_seg_idx,
+                    leave_seg_idx=None,
+                    direction=None,
                 )
             )
-            # Step by 3 strokes per formed pivot to avoid sliding-window duplicates (77 课笔数奇数、中枢窗口重叠).
-            i += 3
-        else:
             i += 1
+            continue
+
+        leaving = strokes[leaving_idx]
+        pivots.append(
+            Pivot(
+                start_bi=i,
+                end_bi=core_end,
+                start_idx=strokes[i].start_idx,
+                end_idx=strokes[core_end].end_idx,
+                zg=zg,
+                zd=zd,
+                level="bi",
+                entry_seg_idx=entry_seg_idx,
+                leave_seg_idx=leaving_idx,
+                direction=leaving.direction,
+            )
+        )
+        i = leaving_idx + 1
     return _finalize_pivot_list(pivots)
 
 
@@ -1591,7 +1630,7 @@ def _leaves_pivot_range(segment: Movement, zd: float, zg: float) -> bool:
 # 离开幅度相对中枢高度偏小 → 标为「类三」；否则仍为标准「三」类独立几何分支。
 _THIRD_CLASS_SHALLOW_LEAVE_RATIO = 0.10
 # Stop-loss buffer: push stop this fraction of pivot height beyond ZD/ZG for more room.
-_STOP_LOSS_BUFFER_RATIO = 0.15
+_STOP_LOSS_BUFFER_RATIO = 0.15  # Legacy fallback; ATR-based SL preferred via risk_controls
 
 
 def _sl_buy(pivot_zd: float, pivot_zg: float) -> float:

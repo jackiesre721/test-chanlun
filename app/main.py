@@ -19,6 +19,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / settings.static_dir
 
 _sync_task: Optional[asyncio.Task] = None
+_trading_task: Optional[asyncio.Task] = None
+_price_feed_task: Optional[asyncio.Task] = None
 
 
 @asynccontextmanager
@@ -38,7 +40,51 @@ async def lifespan(app: FastAPI):
             from app.db.ws_listener import start_ws_listener
 
             _sync_task = asyncio.create_task(start_ws_listener())
+
+    # Initialize EventBus for WebSocket broadcasting
+    from app.services.event_bus import EventBroadcaster
+    event_bus = EventBroadcaster()
+    from app.api.routes import set_event_bus
+    set_event_bus(event_bus)
+    log.info("EventBus initialized")
+
+    # Start price feed (Binance @bookTicker)
+    from app.services.price_feed import PriceFeedService
+    _price_feed = PriceFeedService(event_bus)
+    _price_feed_task = asyncio.create_task(_price_feed.start())
+    from app.api.routes import set_price_feed
+    set_price_feed(_price_feed)
+    log.info("Price feed scheduled")
+
+    # Start paper trading loop
+    if settings.paper_trading_enabled:
+        from app.services.trading_loop import TradingLoop
+        from app.trading.paper_engine import PaperEngine
+
+        _engine = PaperEngine(
+            initial_equity=settings.trading_initial_equity,
+            leverage=settings.trading_leverage,
+            risk_fraction=settings.trading_risk_fraction,
+            max_positions=settings.trading_max_positions,
+        )
+        _loop = TradingLoop(_engine, event_bus=event_bus, price_feed=_price_feed)
+        _trading_task = asyncio.create_task(_loop.start(scan_seconds=settings.trading_scan_seconds))
+        log.info("Paper trading loop scheduled")
+
     yield
+    if _trading_task is not None:
+        _trading_task.cancel()
+        try:
+            await _trading_task
+        except asyncio.CancelledError:
+            pass
+    if _price_feed_task is not None:
+        _price_feed.cancel()
+        _price_feed_task.cancel()
+        try:
+            await _price_feed_task
+        except asyncio.CancelledError:
+            pass
     if _sync_task is not None:
         _sync_task.cancel()
         try:

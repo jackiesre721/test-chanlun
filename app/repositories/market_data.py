@@ -300,6 +300,7 @@ class BinanceRepository:
                     base_url=base_url,
                     timeout=settings.request_timeout_seconds,
                     trust_env=False,
+                    proxy=None,
                 ) as client:
                     response = await client.get(path, params=params)
                     response.raise_for_status()

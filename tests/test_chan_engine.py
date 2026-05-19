@@ -208,7 +208,7 @@ def test_duplicate_same_direction_pivots_are_merged() -> None:
 
     assert len(pivots) == 1
     assert pivots[0].start_idx == 0
-    assert pivots[0].end_idx == 15
+    assert pivots[0].end_idx == 25
 
 
 def test_segments_are_built_from_three_or_more_strokes() -> None:
@@ -324,13 +324,14 @@ def test_bi_pivot_can_generate_divergence_without_segments() -> None:
     from app.core.models import Direction, Stroke
 
     strokes = [
-        Stroke(start_idx=0, end_idx=5, start_price=100, end_price=80, direction=Direction.DOWN),
-        Stroke(start_idx=5, end_idx=10, start_price=80, end_price=95, direction=Direction.UP),
-        Stroke(start_idx=10, end_idx=15, start_price=95, end_price=85, direction=Direction.DOWN),
-        Stroke(start_idx=15, end_idx=20, start_price=85, end_price=93, direction=Direction.UP),
-        Stroke(start_idx=20, end_idx=25, start_price=93, end_price=75, direction=Direction.DOWN),
+        Stroke(start_idx=0, end_idx=5, start_price=20, end_price=50, direction=Direction.UP),
+        Stroke(start_idx=5, end_idx=10, start_price=50, end_price=35, direction=Direction.DOWN),
+        Stroke(start_idx=10, end_idx=15, start_price=35, end_price=48, direction=Direction.UP),
+        Stroke(start_idx=15, end_idx=20, start_price=48, end_price=37, direction=Direction.DOWN),
+        Stroke(start_idx=20, end_idx=25, start_price=37, end_price=48, direction=Direction.UP),
+        Stroke(start_idx=25, end_idx=30, start_price=48, end_price=70, direction=Direction.UP),
     ]
-    macd = _flat_macd(30, 1.0)
+    macd = _flat_macd(35, 1.0)
     for idx in range(0, 6):
         macd[idx].hist = 10
 

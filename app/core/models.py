@@ -705,6 +705,53 @@ class AiVerdictResponse(BaseModel):
     )
 
 
+class PaperPosition(BaseModel):
+    position_id: str
+    symbol: str
+    side: Literal["LONG", "SHORT"]
+    entry_price: float
+    quantity: float
+    stop_loss: float
+    take_profit_1: Optional[float] = None
+    take_profit_2: Optional[float] = None
+    trailing_stop: Optional[float] = None
+    peak_price: Optional[float] = None
+    trough_price: Optional[float] = None
+    margin_used: float
+    leverage: int = 5
+    status: Literal["open", "partial_closed", "closed"] = "open"
+    opened_at: str
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+    realized_pnl: float = 0.0
+    signal_kind: Optional[str] = None
+    reductions_done: str = ""
+
+
+class PaperOrderFull(BaseModel):
+    order_id: str
+    position_id: Optional[str] = None
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    order_type: Literal["open", "close", "partial_close", "reduce"] = "open"
+    quantity: float
+    price: float
+    status: Literal["pending", "filled", "cancelled"] = "filled"
+    reason: str = ""
+    created_at: str
+
+
+class TradingAccountSummary(BaseModel):
+    initial_equity: float
+    current_equity: float
+    available_balance: float
+    unrealized_pnl: float
+    open_positions: int
+    total_realized_pnl: float
+    daily_pnl: float
+    daily_trades: int
+
+
 AnalyzeResponse.model_rebuild()
 
 

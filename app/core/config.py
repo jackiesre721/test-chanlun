@@ -92,7 +92,23 @@ class Settings(BaseSettings):
     sync_enabled: bool = Field(default=False)
     sync_retention_days: int = Field(default=30, ge=1)
     binance_ws_url: str = "wss://stream.binance.com:9443"
+    binance_futures_ws_url: str = "wss://fstream.binance.com"
     ws_reconnect_delay_seconds: float = Field(default=5.0, ge=1.0, le=60.0)
+
+    # Auto position reduction: "R_multiple:fraction" pairs
+    auto_reduce_thresholds: str = "0.5:0.4,1.0:0.3"
+
+    # Feishu notification
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_chat_id: str = ""
+
+    # Paper trading engine
+    trading_initial_equity: float = Field(default=1000.0, gt=0)
+    trading_leverage: int = Field(default=10, ge=1, le=10)
+    trading_risk_fraction: float = Field(default=0.02, gt=0, le=0.1)
+    trading_max_positions: int = Field(default=5, ge=1, le=10)
+    trading_scan_seconds: int = Field(default=30, ge=15, le=600)
 
     # 静态文件目录：默认 static；设为 static_dist 可用 Vite 构建产物。
     static_dir: str = "static_dist"
